@@ -12,23 +12,6 @@ Open it and try: tap AMP's knobs to open the slider, tap a bypassed chip once
 to select it and again to toggle bypass, and drag a chip's grip to reorder
 the chain.
 
-## Layout
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│ PRESET  Preset 1 [EDITED]                    Wi-Fi BLE  SAVE │  60px
-├─────────────────────────────────────────────────────────────┤
-│ [≡GATE][≡COMP][≡DRIVE][≡AMP][≡CHORUS][≡DELAY][≡REVERB]        │ 112px  <- drag to reorder
-├─────────────────────────────────────────────────────────────┤
-│  AMP  Fender '65 Twin Reverb ▾                        ●●●○○  │
-│                                                                │
-│     (Gain)   (Bass)   (Middle)   (Treble)   (Level)          │ 346px  <- tap a ring to
-│                                                                │        open the slider
-├─────────────────────────────────────────────────────────────┤
-│ [Presets][Settings]      MASTER ━━━━━●━━━ 63%        [MUTE]  │  82px
-└─────────────────────────────────────────────────────────────┘
-```
-
 ## The two interactions the sponsor asked for
 
 1. **The multipurpose slider.** Tapping any knob never adjusts it directly —
