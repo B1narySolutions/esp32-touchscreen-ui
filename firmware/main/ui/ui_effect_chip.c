@@ -76,7 +76,7 @@ lv_obj_t *ui_effect_chip_create(lv_obj_t *parent, uint8_t fx_index) {
     lv_obj_set_style_border_color(chip, UI_COLOR_BORDER, 0);
     lv_obj_set_style_pad_all(chip, 0, 0);
     lv_obj_clear_flag(chip, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(chip, LV_OBJ_FLAG_CLICKABLE); // plain lv_obj isn't clickable by default
+    lv_obj_add_flag(chip, LV_OBJ_FLAG_CLICKABLE); // already the lv_obj default in LVGL 9; kept explicit
     lv_obj_set_user_data(chip, (void *)(uintptr_t)fx_index);
 
     lv_obj_t *grip = lv_label_create(chip);
@@ -102,6 +102,7 @@ lv_obj_t *ui_effect_chip_create(lv_obj_t *parent, uint8_t fx_index) {
     lv_obj_set_size(dot, 7, 7);
     lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
+    lv_obj_remove_flag(dot, LV_OBJ_FLAG_CLICKABLE); // plain lv_obj is clickable by default; don't swallow chip taps
 
     lv_obj_t *state_text = lv_label_create(row);
     lv_obj_set_style_text_font(state_text, &lv_font_montserrat_10, 0);

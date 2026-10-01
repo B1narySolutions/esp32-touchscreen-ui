@@ -270,6 +270,7 @@ void ui_test_mode_init(lv_obj_t *screen) {
         lv_obj_set_flex_grow(b, 1);
         lv_obj_set_style_bg_color(b, lv_color_hex(bar_colors[i]), 0);
         lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
+        lv_obj_remove_flag(b, LV_OBJ_FLAG_CLICKABLE); // let taps reach s_bars to close it
     }
 
     s_timer = lv_timer_create(refresh, 1000, NULL);
