@@ -9,6 +9,7 @@ idf_component_register(
         "ui/ui_effects_data.c"
         "ui/ui_effect_chip.c"
         "ui/ui_knob.c"
+        "ui/ui_ir_curve.c"
         "ui/ui_vertical_slider.c"
         "ui/ui_test_mode.c"
     INCLUDE_DIRS

@@ -2,9 +2,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-// ESP32-S3 <-> Daisy Seed ("SEED3", running NAM) link, planned over I2C. Wire format and
-// addressing are still undecided, so this is only the seam: Test Mode and the rest of the UI
-// read everything through seed_link_get_stats(), and the real I2C transport fills it in.
+// ESP32-S3 <-> Daisy Seed ("SEED3", running NAM) link. Transport and wire format are still
+// undecided (I2C was the first plan; as of 2026-10-01 the team is leaning towards UART, with
+// I2C going to the potentiometers), so this is only the seam: Test Mode and the rest of the
+// UI read everything through seed_link_get_stats(), and the real transport fills it in.
 typedef struct {
     bool     connected;
     uint32_t packets_tx;

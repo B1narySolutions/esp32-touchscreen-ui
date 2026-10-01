@@ -16,6 +16,10 @@ void board_lvgl_unlock(void);
 void board_set_backlight_pct(uint8_t pct);
 uint8_t board_get_backlight_pct(void);
 
+// Panel scan-out rate implied by the RGB pixel clock and porch timings. This is the hard
+// ceiling on visible frames per second - LVGL can't show frames faster than the panel scans.
+float board_panel_refresh_hz(void);
+
 // Battery voltage from the expander ADC (Waveshare's 3:1 divider, 3.3V ref, 10-bit).
 // Returns a negative value if the read failed.
 float board_battery_volts(void);

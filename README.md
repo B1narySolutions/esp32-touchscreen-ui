@@ -97,9 +97,10 @@ timings, GT911 reset sequence, IO expander at 0x24 (backlight PWM + battery ADC)
 
 ## Test Mode
 
-Menu → Test Mode on the device shows live readings (heap, PSRAM, chip temperature,
-battery voltage, backlight, redraw rate, touch test, colour bars) and the SEED3 link
-status. The firmware also prints one `DIAG {json}` line per second on the serial
+Menu → Test Mode on the device shows live readings (firmware build ID, per-core CPU load,
+heap, PSRAM, chip temperature, battery voltage and its 10 s range, backlight, panel refresh
+rate, UI frame time and tap-to-frame latency, a touch test with an alignment ring, colour
+bars) and the SEED3 link status. The firmware also prints one `DIAG {json}` line per second on the serial
 port; the preview's Test Mode reads those over Web Serial (Chrome/Edge) and shows the
 same live values. Nothing in either is simulated. SEED3 fields read "Not connected"
 until `seed_link.c` gets a real transport.

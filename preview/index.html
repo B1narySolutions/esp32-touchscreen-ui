@@ -380,18 +380,25 @@ class App extends Component {
     const dash = '—';
     const kb = (b) => `${Math.round(b / 1024)} KB`;
     const hms = (t) => `${String(Math.floor(t / 3600)).padStart(2, '0')}:${String(Math.floor(t / 60) % 60).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`;
+    // Fields newer firmware adds; older builds simply don't send them, so show a dash.
+    const has = (k) => d && d[k] !== undefined;
+    const ui = d && d.ui;
     const esp = [
+      ['Firmware', has('fw') ? `${d.fw}  #${d.elf}` : dash],
       ['Uptime', d ? hms(d.up) : dash],
       ['Reset reason', d ? d.rst : dash],
       ['ESP-IDF', d ? d.idf : dash],
+      ['CPU load (core 0 / 1)', has('cpu') ? (d.cpu[0] === null ? 'run-time stats off' : `${d.cpu[0].toFixed(0)} % / ${d.cpu[1].toFixed(0)} %`) : dash],
       ['Free internal heap', d ? kb(d.heap) : dash],
       ['Min free heap (since boot)', d ? kb(d.heap_min) : dash],
       ['Largest free block', d ? kb(d.heap_big) : dash],
       ['Free PSRAM', d ? `${(d.psram / 1048576).toFixed(2)} MB of ${(d.psram_total / 1048576).toFixed(2)} MB` : dash],
       ['Chip temperature', d ? (d.temp === null ? 'sensor unavailable' : `${d.temp.toFixed(1)} °C`) : dash],
-      ['Battery', d ? (d.vbat < 0 ? 'read failed' : `${d.vbat.toFixed(2)} V`) : dash],
+      ['Battery', d ? (d.vbat < 0 ? 'read failed' : `${d.vbat.toFixed(2)} V` + (has('vbat_min') && d.vbat_min >= 0 ? `  (${d.vbat_min.toFixed(2)} – ${d.vbat_max.toFixed(2)}, 10 s)` : '')) : dash],
       ['Backlight PWM', d ? `${d.bl} %` : dash],
-      ['UI redraws / s', d ? String(d.fps) : dash],
+      ['Display', d ? (has('panel_hz') ? `${d.panel_hz.toFixed(1)} Hz panel, ${d.fps} frames/s` : `${d.fps} frames/s`) : dash],
+      ['Frame time (avg / max)', ui ? (d.fps === 0 ? 'idle' : `${ui.frame_avg.toFixed(1)} / ${ui.frame_max.toFixed(1)} ms`) : dash],
+      ['Tap to frame (worst)', ui && ui.tap > 0 ? `${ui.tap.toFixed(0)} ms` : dash],
       ['Touch', d ? (d.tx < 0 ? `${d.touches} taps` : `${d.touches} taps, last (${d.tx}, ${d.ty})`) : dash]
     ];
     const sd = d && d.seed;

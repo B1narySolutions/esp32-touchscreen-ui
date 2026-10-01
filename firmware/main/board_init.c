@@ -31,9 +31,15 @@ static const char *TAG = "board";
 #define PIN_PCLK      GPIO_NUM_7
 
 #define LCD_PCLK_HZ   (24 * 1000 * 1000)
+#define LCD_HPW       162
+#define LCD_HBP       152
+#define LCD_HFP       48
+#define LCD_VPW       45
+#define LCD_VBP       13
+#define LCD_VFP       3
 
 static i2c_master_bus_handle_t s_i2c_bus;
-static uint8_t s_backlight_pct = 80;
+static uint8_t s_backlight_pct = 100; // full brightness; the panel reads dim below this
 
 static void init_i2c(void) {
     i2c_master_bus_config_t cfg = {
@@ -54,12 +60,12 @@ static esp_lcd_panel_handle_t init_rgb_panel(uint8_t num_fbs) {
             .pclk_hz = LCD_PCLK_HZ,
             .h_res = BOARD_LCD_H_RES,
             .v_res = BOARD_LCD_V_RES,
-            .hsync_pulse_width = 162,
-            .hsync_back_porch = 152,
-            .hsync_front_porch = 48,
-            .vsync_pulse_width = 45,
-            .vsync_back_porch = 13,
-            .vsync_front_porch = 3,
+            .hsync_pulse_width = LCD_HPW,
+            .hsync_back_porch = LCD_HBP,
+            .hsync_front_porch = LCD_HFP,
+            .vsync_pulse_width = LCD_VPW,
+            .vsync_back_porch = LCD_VBP,
+            .vsync_front_porch = LCD_VFP,
             .flags.pclk_active_neg = 1,
         },
         .data_width = 16,
@@ -125,7 +131,12 @@ static esp_lcd_touch_handle_t init_touch(void) {
 
 lv_display_t *board_init(void) {
     const esp_lv_adapter_rotation_t rotation = ESP_LV_ADAPTER_ROTATE_0;
-    const esp_lv_adapter_tear_avoid_mode_t tear = ESP_LV_ADAPTER_TEAR_AVOID_MODE_DEFAULT_RGB;
+    // DOUBLE_DIRECT: LVGL draws straight into the back frame buffer, then the buffers swap
+    // on VSYNC and only the redrawn areas are copied across. The adapter's RGB default
+    // (TRIPLE_PARTIAL, also what Waveshare's demo uses) instead memcpy()s the whole
+    // un-redrawn screen - ~1.2 MB PSRAM to PSRAM - after every frame, because the S3 has
+    // no DMA2D. Measured on this board: ~51 ms of a ~75 ms frame, even for a small change.
+    const esp_lv_adapter_tear_avoid_mode_t tear = ESP_LV_ADAPTER_TEAR_AVOID_MODE_DOUBLE_DIRECT;
 
     init_i2c();
     ESP_ERROR_CHECK(io_expander_init(s_i2c_bus));
@@ -139,11 +150,15 @@ lv_display_t *board_init(void) {
     esp_lv_adapter_config_t adapter_cfg = ESP_LV_ADAPTER_DEFAULT_CONFIG();
     adapter_cfg.task_stack_size = 12 * 1024;
     adapter_cfg.stack_in_psram = true;
+    // Core 0 services the RGB bounce-buffer interrupt (the panel is created from app_main
+    // there); keep the LVGL task on the other core so the two don't contend.
+    adapter_cfg.task_core_id = 1;
     ESP_ERROR_CHECK(esp_lv_adapter_init(&adapter_cfg));
 
     esp_lv_adapter_display_config_t disp_cfg = ESP_LV_ADAPTER_DISPLAY_RGB_DEFAULT_CONFIG(
         panel, NULL, BOARD_LCD_H_RES, BOARD_LCD_V_RES, rotation);
     disp_cfg.profile.use_psram = true;
+    disp_cfg.tear_avoid_mode = tear; // the macro hard-codes the RGB default; must match num_fbs above
     lv_display_t *disp = esp_lv_adapter_register_display(&disp_cfg);
     assert(disp != NULL);
 
@@ -167,6 +182,12 @@ void board_set_backlight_pct(uint8_t pct) {
 }
 
 uint8_t board_get_backlight_pct(void) { return s_backlight_pct; }
+
+float board_panel_refresh_hz(void) {
+    const float h_total = BOARD_LCD_H_RES + LCD_HPW + LCD_HBP + LCD_HFP;
+    const float v_total = BOARD_LCD_V_RES + LCD_VPW + LCD_VBP + LCD_VFP;
+    return LCD_PCLK_HZ / (h_total * v_total);
+}
 
 float board_battery_volts(void) {
     uint32_t sum = 0;

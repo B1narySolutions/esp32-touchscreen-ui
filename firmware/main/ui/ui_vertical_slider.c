@@ -1,7 +1,6 @@
 #include "ui_vertical_slider.h"
 #include "ui_effects_data.h"
 #include "ui_theme.h"
-#include "ui_knob.h"
 #include "ui_main.h"
 
 static lv_obj_t *s_backdrop;
@@ -17,13 +16,7 @@ static void apply_value(int32_t value) {
     g_knob_values[s_target_fx][s_target_knob] = value;
     lv_label_set_text_fmt(s_value_label, "%d%%", (int)value);
     lv_slider_set_value(s_slider, value, LV_ANIM_OFF);
-
-    // Reflect it back into the panel immediately if that knob is on screen -
-    // avoids a full panel rebuild just to show a number changing.
-    lv_obj_t *live_knob = ui_main_find_visible_knob(s_target_fx, s_target_knob);
-    if (live_knob) ui_knob_set_value(live_knob, value);
-
-    ui_main_mark_dirty();
+    ui_main_on_knob_changed(s_target_fx, s_target_knob);
 }
 
 static void backdrop_event_cb(lv_event_t *e) {
@@ -53,22 +46,27 @@ void ui_vertical_slider_init(lv_obj_t *screen) {
     s_backdrop = lv_obj_create(screen);
     lv_obj_remove_style_all(s_backdrop);
     lv_obj_set_size(s_backdrop, LV_PCT(100), LV_PCT(100));
-    lv_obj_set_style_bg_color(s_backdrop, lv_color_hex(0x06060a), 0);
+    lv_obj_set_style_bg_color(s_backdrop, UI_COLOR_BACKDROP, 0);
     lv_obj_set_style_bg_opa(s_backdrop, 160, 0);
     lv_obj_add_flag(s_backdrop, LV_OBJ_FLAG_HIDDEN | LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(s_backdrop, backdrop_event_cb, LV_EVENT_CLICKED, NULL);
 
+    // Fixed-size card: pad 22 + label 16 + value 27 + slider 220 + buttons 44 + hint 15 + pad 22,
+    // plus four 14px row gaps = 422, inside a 430 card. Never scrollable - if the
+    // content grows, grow the card rather than let the popup scroll under a finger.
     s_card = lv_obj_create(s_backdrop);
-    lv_obj_set_size(s_card, 200, 340);
+    lv_obj_set_size(s_card, 220, 430);
     lv_obj_center(s_card);
+    lv_obj_clear_flag(s_card, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_color(s_card, UI_COLOR_CARD, 0);
     lv_obj_set_style_radius(s_card, 22, 0);
     lv_obj_set_style_border_width(s_card, 1, 0);
-    lv_obj_set_style_border_color(s_card, lv_color_hex(0x33333b), 0);
+    lv_obj_set_style_border_color(s_card, UI_COLOR_BORDER, 0);
     lv_obj_set_flex_flow(s_card, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(s_card, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_row(s_card, 14, 0);
-    lv_obj_set_style_pad_top(s_card, 26, 0);
+    lv_obj_set_style_pad_ver(s_card, 22, 0);
+    lv_obj_set_style_pad_hor(s_card, 16, 0);
     // Card must itself be clickable: LVGL's hit-test falls through a non-clickable
     // container to its clickable parent (the backdrop) wherever none of the card's
     // own children claim the point, which would close the popup on a tap anywhere
@@ -79,8 +77,11 @@ void ui_vertical_slider_init(lv_obj_t *screen) {
     lv_obj_add_flag(s_card, LV_OBJ_FLAG_CLICKABLE);
 
     lv_obj_t *close_btn = lv_button_create(s_card);
-    lv_obj_set_size(close_btn, 28, 28);
-    lv_obj_align(close_btn, LV_ALIGN_TOP_RIGHT, -4, 4);
+    lv_obj_set_size(close_btn, 40, 40);
+    // Floating: taken out of the flex column (where lv_obj_align is ignored), so it
+    // sits in the top-right corner instead of stacking above the label.
+    lv_obj_add_flag(close_btn, LV_OBJ_FLAG_FLOATING);
+    lv_obj_align(close_btn, LV_ALIGN_TOP_RIGHT, 8, -14);
     lv_obj_set_style_bg_opa(close_btn, 0, 0);
     lv_obj_add_event_cb(close_btn, close_btn_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *close_label = lv_label_create(close_btn);
@@ -89,7 +90,7 @@ void ui_vertical_slider_init(lv_obj_t *screen) {
 
     s_label = lv_label_create(s_card);
     lv_obj_set_style_text_color(s_label, UI_COLOR_TEXT_DIM, 0);
-    lv_obj_set_style_text_font(s_label, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(s_label, &lv_font_montserrat_14, 0);
 
     s_value_label = lv_label_create(s_card);
     lv_obj_set_style_text_font(s_value_label, &lv_font_montserrat_24, 0);
@@ -111,22 +112,27 @@ void ui_vertical_slider_init(lv_obj_t *screen) {
     lv_obj_set_style_pad_column(btn_row, 14, 0);
 
     lv_obj_t *minus_btn = lv_button_create(btn_row);
-    lv_obj_set_size(minus_btn, 38, 38);
+    lv_obj_set_size(minus_btn, 44, 44);
     lv_obj_set_style_radius(minus_btn, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_color(minus_btn, lv_color_hex(0x26262c), 0);
+    lv_obj_set_style_bg_color(minus_btn, UI_COLOR_DIVIDER, 0);
     lv_obj_add_event_cb(minus_btn, minus_btn_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *minus_label = lv_label_create(minus_btn);
     lv_label_set_text(minus_label, "-");
     lv_obj_center(minus_label);
 
     lv_obj_t *plus_btn = lv_button_create(btn_row);
-    lv_obj_set_size(plus_btn, 38, 38);
+    lv_obj_set_size(plus_btn, 44, 44);
     lv_obj_set_style_radius(plus_btn, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_color(plus_btn, lv_color_hex(0x26262c), 0);
+    lv_obj_set_style_bg_color(plus_btn, UI_COLOR_DIVIDER, 0);
     lv_obj_add_event_cb(plus_btn, plus_btn_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *plus_label = lv_label_create(plus_btn);
     lv_label_set_text(plus_label, "+");
     lv_obj_center(plus_label);
+
+    lv_obj_t *hint = lv_label_create(s_card);
+    lv_label_set_text(hint, "tap outside to close");
+    lv_obj_set_style_text_font(hint, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(hint, UI_COLOR_TEXT_MUTED, 0);
 }
 
 void ui_vertical_slider_show(uint8_t fx_index, uint8_t knob_index) {

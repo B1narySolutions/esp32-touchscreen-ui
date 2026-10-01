@@ -1,6 +1,9 @@
 #pragma once
 #include "lvgl.h"
 
+// Marks rail children that are effect chips (as opposed to the "+" add button).
+#define UI_CHIP_FLAG LV_OBJ_FLAG_USER_1
+
 // Creates one chip in the effects rail for effect definition index fx_index
 // (see enum in ui_effects_data.h). The chip stores fx_index as its user_data so
 // it keeps its identity no matter where it gets dragged to in the rail.

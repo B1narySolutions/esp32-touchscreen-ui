@@ -3,9 +3,11 @@
 #include "diag.h"
 #include "seed_link.h"
 #include <math.h>
+#include <stdarg.h>
 #include <stdio.h>
+#include <string.h>
 
-#define ESP_ROWS  11
+#define ESP_ROWS  15
 #define SEED_ROWS 12
 
 static lv_obj_t *s_root;
@@ -15,12 +17,13 @@ static lv_obj_t *s_seed_vals[SEED_ROWS];
 static lv_obj_t *s_seed_banner;
 static lv_obj_t *s_seed_dot;
 static lv_obj_t *s_ping_btn;
+static lv_obj_t *s_touch_mark;
 static lv_timer_t *s_timer;
 
 static const char *k_esp_keys[ESP_ROWS] = {
-    "Uptime", "Reset reason", "Free internal heap", "Min free heap (since boot)",
-    "Largest free block", "Free PSRAM", "Chip temperature", "Battery",
-    "Backlight PWM", "UI redraws / s", "Touch",
+    "Firmware", "Uptime", "Reset reason", "CPU load (core 0 / 1)", "Free internal heap",
+    "Min free heap", "Largest free block", "Free PSRAM", "Chip temperature", "Battery",
+    "Backlight PWM", "Display", "Frame time (avg / max)", "Tap to frame (worst)", "Touch",
 };
 static const char *k_seed_keys[SEED_ROWS] = {
     "Link", "Packets TX / RX", "Link errors", "Round-trip latency", "DSP firmware",
@@ -33,8 +36,8 @@ static lv_obj_t *make_panel(lv_obj_t *parent, const char *title, const char *sub
     lv_obj_t *p = lv_obj_create(parent);
     lv_obj_set_height(p, LV_PCT(100));
     lv_obj_set_flex_grow(p, 1);
-    lv_obj_set_style_bg_color(p, lv_color_hex(0x16161a), 0);
-    lv_obj_set_style_border_color(p, lv_color_hex(0x26262c), 0);
+    lv_obj_set_style_bg_color(p, UI_COLOR_PANEL, 0);
+    lv_obj_set_style_border_color(p, UI_COLOR_DIVIDER, 0);
     lv_obj_set_style_border_width(p, 1, 0);
     lv_obj_set_style_radius(p, 14, 0);
     lv_obj_set_style_pad_all(p, 14, 0);
@@ -60,19 +63,19 @@ static lv_obj_t *make_panel(lv_obj_t *parent, const char *title, const char *sub
     lv_obj_set_style_text_font(t, &lv_font_montserrat_16, 0);
     lv_obj_t *st = lv_label_create(head);
     lv_label_set_text(st, sub);
-    lv_obj_set_style_text_color(st, lv_color_hex(0x5a5852), 0);
-    lv_obj_set_style_text_font(st, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(st, UI_COLOR_TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(st, &lv_font_montserrat_12, 0);
 
     for (int i = 0; i < n; i++) {
         lv_obj_t *row = lv_obj_create(p);
         lv_obj_remove_style_all(row);
-        lv_obj_set_size(row, LV_PCT(100), 30);
+        lv_obj_set_size(row, LV_PCT(100), 28);
         lv_obj_set_style_border_side(row, LV_BORDER_SIDE_BOTTOM, 0);
         lv_obj_set_style_border_width(row, 1, 0);
-        lv_obj_set_style_border_color(row, lv_color_hex(0x1f1f24), 0);
+        lv_obj_set_style_border_color(row, UI_COLOR_DIVIDER, 0);
         lv_obj_t *k = lv_label_create(row);
         lv_label_set_text(k, keys[i]);
-        lv_obj_set_style_text_color(k, lv_color_hex(0x8f8b82), 0);
+        lv_obj_set_style_text_color(k, UI_COLOR_TEXT_MUTED, 0);
         lv_obj_set_style_text_font(k, &lv_font_montserrat_12, 0);
         lv_obj_align(k, LV_ALIGN_LEFT_MID, 0, 0);
         lv_obj_t *v = lv_label_create(row);
@@ -84,29 +87,48 @@ static lv_obj_t *make_panel(lv_obj_t *parent, const char *title, const char *sub
     return p;
 }
 
-static void set_dash(lv_obj_t *l) { lv_label_set_text(l, "-"); }
+// Only touch labels whose text actually changed: lv_label_set_text() always invalidates, and
+// redrawing every unchanged value each second would skew the frame-time rows on this screen.
+static void set_val(lv_obj_t *l, const char *fmt, ...) {
+    char buf[64];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    if (strcmp(lv_label_get_text(l), buf) != 0) lv_label_set_text(l, buf);
+}
+
+static void set_dash(lv_obj_t *l) { set_val(l, "-"); }
 
 static void refresh(lv_timer_t *t) {
     (void)t;
     diag_snapshot_t d;
     diag_take(&d);
 
-    lv_label_set_text_fmt(s_esp_vals[0], "%02lu:%02lu:%02lu", (unsigned long)(d.uptime_s / 3600),
-                          (unsigned long)(d.uptime_s / 60 % 60), (unsigned long)(d.uptime_s % 60));
-    lv_label_set_text(s_esp_vals[1], d.reset_reason);
-    lv_label_set_text_fmt(s_esp_vals[2], "%lu KB", (unsigned long)(d.heap_free / 1024));
-    lv_label_set_text_fmt(s_esp_vals[3], "%lu KB", (unsigned long)(d.heap_min_free / 1024));
-    lv_label_set_text_fmt(s_esp_vals[4], "%lu KB", (unsigned long)(d.heap_largest_block / 1024));
-    lv_label_set_text_fmt(s_esp_vals[5], "%.2f MB of %.2f MB", d.psram_free / 1048576.0, d.psram_total / 1048576.0);
-    if (isnan(d.chip_temp_c)) lv_label_set_text(s_esp_vals[6], "sensor unavailable");
-    else lv_label_set_text_fmt(s_esp_vals[6], "%.1f C", d.chip_temp_c);
-    if (d.battery_v < 0) lv_label_set_text(s_esp_vals[7], "read failed");
-    else lv_label_set_text_fmt(s_esp_vals[7], "%.2f V", d.battery_v);
-    lv_label_set_text_fmt(s_esp_vals[8], "%u %%", d.backlight_pct);
-    lv_label_set_text_fmt(s_esp_vals[9], "%lu", (unsigned long)d.redraws_per_s);
-    if (d.last_touch_x < 0) lv_label_set_text_fmt(s_esp_vals[10], "%lu taps", (unsigned long)d.touches);
-    else lv_label_set_text_fmt(s_esp_vals[10], "%lu taps, last (%d, %d)", (unsigned long)d.touches,
-                               d.last_touch_x, d.last_touch_y);
+    lv_obj_t **v = s_esp_vals;
+    set_val(v[0], "%s  #%s", d.fw_version, d.fw_elf);
+    set_val(v[1], "%02lu:%02lu:%02lu", (unsigned long)(d.uptime_s / 3600),
+            (unsigned long)(d.uptime_s / 60 % 60), (unsigned long)(d.uptime_s % 60));
+    set_val(v[2], "%s", d.reset_reason);
+    if (isnan(d.cpu_load_pct[0])) set_val(v[3], "run-time stats off");
+    else set_val(v[3], "%.0f %% / %.0f %%", d.cpu_load_pct[0], d.cpu_load_pct[1]);
+    set_val(v[4], "%lu KB", (unsigned long)(d.heap_free / 1024));
+    set_val(v[5], "%lu KB", (unsigned long)(d.heap_min_free / 1024));
+    set_val(v[6], "%lu KB", (unsigned long)(d.heap_largest_block / 1024));
+    set_val(v[7], "%.2f MB of %.2f MB", d.psram_free / 1048576.0, d.psram_total / 1048576.0);
+    if (isnan(d.chip_temp_c)) set_val(v[8], "sensor unavailable");
+    else set_val(v[8], "%.1f C", d.chip_temp_c);
+    if (d.battery_v < 0) set_val(v[9], "read failed");
+    else set_val(v[9], "%.2f V  (%.2f - %.2f, %d s)", d.battery_v, d.battery_v_min, d.battery_v_max,
+                 DIAG_BATT_WINDOW_S);
+    set_val(v[10], "%u %%", d.backlight_pct);
+    set_val(v[11], "%.1f Hz panel, %lu frames/s", d.panel_refresh_hz, (unsigned long)d.redraws_per_s);
+    if (d.redraws_per_s == 0) set_val(v[12], "idle");
+    else set_val(v[12], "%.1f / %.1f ms", d.frame_avg_ms, d.frame_max_ms);
+    if (d.tap_ms <= 0) set_dash(v[13]);
+    else set_val(v[13], "%.0f ms", d.tap_ms);
+    if (d.last_touch_x < 0) set_val(v[14], "%lu taps", (unsigned long)d.touches);
+    else set_val(v[14], "%lu taps, last (%d, %d)", (unsigned long)d.touches, d.last_touch_x, d.last_touch_y);
 
     seed_link_stats_t s;
     seed_link_get_stats(&s);
@@ -116,22 +138,22 @@ static void refresh(lv_timer_t *t) {
     if (s.connected) lv_obj_clear_state(s_ping_btn, LV_STATE_DISABLED);
     else lv_obj_add_state(s_ping_btn, LV_STATE_DISABLED);
 
-    lv_label_set_text(s_seed_vals[0], s.connected ? "Connected" : "Not connected");
-    lv_label_set_text(s_seed_vals[11], "not chosen yet");
+    set_val(s_seed_vals[0], "%s", s.connected ? "Connected" : "Not connected");
+    set_val(s_seed_vals[11], "not chosen yet");
     if (!s.connected) {
         for (int i = 1; i < SEED_ROWS - 1; i++) set_dash(s_seed_vals[i]);
         return;
     }
-    lv_label_set_text_fmt(s_seed_vals[1], "%lu / %lu", (unsigned long)s.packets_tx, (unsigned long)s.packets_rx);
-    lv_label_set_text_fmt(s_seed_vals[2], "%lu", (unsigned long)s.link_errors);
-    lv_label_set_text_fmt(s_seed_vals[3], "%.2f ms", s.rtt_ms);
-    lv_label_set_text(s_seed_vals[4], s.dsp_fw_version);
-    lv_label_set_text_fmt(s_seed_vals[5], "%lu Hz / %u", (unsigned long)s.sample_rate_hz, s.block_size);
-    lv_label_set_text_fmt(s_seed_vals[6], "%.1f %%", s.dsp_cpu_pct);
-    lv_label_set_text(s_seed_vals[7], s.nam_model);
-    lv_label_set_text_fmt(s_seed_vals[8], "%.1f dBFS", s.input_peak_dbfs);
-    lv_label_set_text_fmt(s_seed_vals[9], "%.1f dBFS", s.output_peak_dbfs);
-    lv_label_set_text_fmt(s_seed_vals[10], "%lu", (unsigned long)s.clip_count);
+    set_val(s_seed_vals[1], "%lu / %lu", (unsigned long)s.packets_tx, (unsigned long)s.packets_rx);
+    set_val(s_seed_vals[2], "%lu", (unsigned long)s.link_errors);
+    set_val(s_seed_vals[3], "%.2f ms", s.rtt_ms);
+    set_val(s_seed_vals[4], "%s", s.dsp_fw_version);
+    set_val(s_seed_vals[5], "%lu Hz / %u", (unsigned long)s.sample_rate_hz, s.block_size);
+    set_val(s_seed_vals[6], "%.1f %%", s.dsp_cpu_pct);
+    set_val(s_seed_vals[7], "%s", s.nam_model);
+    set_val(s_seed_vals[8], "%.1f dBFS", s.input_peak_dbfs);
+    set_val(s_seed_vals[9], "%.1f dBFS", s.output_peak_dbfs);
+    set_val(s_seed_vals[10], "%lu", (unsigned long)s.clip_count);
 }
 
 static void touch_pad_cb(lv_event_t *e) {
@@ -139,18 +161,29 @@ static void touch_pad_cb(lv_event_t *e) {
     if (!indev) return;
     lv_point_t p;
     lv_indev_get_point(indev, &p);
-    diag_note_touch(p.x, p.y);
-    refresh(NULL);
-    (void)e;
+    // The ring is drawn exactly where the touch controller reports the finger. If it isn't
+    // centred under the fingertip, the GT911 swap_xy/mirror flags in board_init.c are wrong.
+    lv_obj_set_pos(s_touch_mark, p.x - lv_obj_get_width(s_touch_mark) / 2,
+                   p.y - lv_obj_get_height(s_touch_mark) / 2);
+    lv_obj_clear_flag(s_touch_mark, LV_OBJ_FLAG_HIDDEN);
+    if (lv_event_get_code(e) == LV_EVENT_PRESSED) {
+        diag_note_touch(p.x, p.y);
+        refresh(NULL);
+    }
 }
 
 static void exit_cb(lv_event_t *e) {
     (void)e;
+    lv_obj_add_flag(s_touch_mark, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_root, LV_OBJ_FLAG_HIDDEN);
     lv_timer_pause(s_timer);
 }
 
-static void bars_open_cb(lv_event_t *e) { (void)e; lv_obj_clear_flag(s_bars, LV_OBJ_FLAG_HIDDEN); }
+static void bars_open_cb(lv_event_t *e) {
+    (void)e;
+    lv_obj_add_flag(s_touch_mark, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(s_bars, LV_OBJ_FLAG_HIDDEN);
+}
 static void bars_close_cb(lv_event_t *e) { (void)e; lv_obj_add_flag(s_bars, LV_OBJ_FLAG_HIDDEN); }
 static void ping_cb(lv_event_t *e) { (void)e; seed_link_ping(); refresh(NULL); }
 static void reset_cb(lv_event_t *e) { (void)e; diag_reset_touches(); seed_link_reset_counters(); refresh(NULL); }
@@ -174,7 +207,7 @@ void ui_test_mode_init(lv_obj_t *screen) {
     s_root = lv_obj_create(screen);
     lv_obj_remove_style_all(s_root);
     lv_obj_set_size(s_root, LV_PCT(100), LV_PCT(100));
-    lv_obj_set_style_bg_color(s_root, lv_color_hex(0x0e0e11), 0);
+    lv_obj_set_style_bg_color(s_root, UI_COLOR_BG, 0);
     lv_obj_set_style_bg_opa(s_root, LV_OPA_COVER, 0);
     lv_obj_set_style_text_color(s_root, UI_COLOR_TEXT, 0);
     lv_obj_set_style_pad_hor(s_root, 22, 0);
@@ -191,8 +224,8 @@ void ui_test_mode_init(lv_obj_t *screen) {
     lv_label_set_text(pill, "TEST MODE");
     lv_obj_set_style_bg_color(pill, UI_COLOR_MUTE, 0);
     lv_obj_set_style_bg_opa(pill, LV_OPA_COVER, 0);
-    lv_obj_set_style_text_color(pill, lv_color_hex(0x101013), 0);
-    lv_obj_set_style_text_font(pill, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(pill, UI_COLOR_ON_ACCENT, 0);
+    lv_obj_set_style_text_font(pill, &lv_font_montserrat_12, 0);
     lv_obj_set_style_pad_hor(pill, 8, 0);
     lv_obj_set_style_pad_ver(pill, 4, 0);
     lv_obj_set_style_radius(pill, 5, 0);
@@ -201,7 +234,7 @@ void ui_test_mode_init(lv_obj_t *screen) {
     lv_label_set_text(title, "Diagnostics - live hardware readings");
     lv_obj_set_style_text_font(title, &lv_font_montserrat_16, 0);
     lv_obj_align(title, LV_ALIGN_LEFT_MID, 96, 0);
-    lv_obj_t *exit_btn = make_btn(head, "Exit Test Mode", exit_cb, UI_COLOR_ACCENT, lv_color_hex(0x161409));
+    lv_obj_t *exit_btn = make_btn(head, "Exit Test Mode", exit_cb, UI_COLOR_ACCENT, UI_COLOR_ON_ACCENT);
     lv_obj_align(exit_btn, LV_ALIGN_RIGHT_MID, 0, 0);
 
     lv_obj_t *body = lv_obj_create(s_root);
@@ -219,9 +252,9 @@ void ui_test_mode_init(lv_obj_t *screen) {
     lv_label_set_long_mode(s_seed_banner, LV_LABEL_LONG_WRAP);
     lv_label_set_text(s_seed_banner, "No link to the Daisy Seed yet. These fields fill in once the "
                                      "ESP32 <-> SEED3 link is wired and its protocol is implemented.");
-    lv_obj_set_style_text_font(s_seed_banner, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(s_seed_banner, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(s_seed_banner, lv_color_hex(0xe2a05c), 0);
-    lv_obj_set_style_bg_color(s_seed_banner, lv_color_hex(0x231d16), 0);
+    lv_obj_set_style_bg_color(s_seed_banner, lv_color_hex(0x3a2e20), 0);
     lv_obj_set_style_bg_opa(s_seed_banner, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(s_seed_banner, 8, 0);
     lv_obj_set_style_radius(s_seed_banner, 8, 0);
@@ -235,16 +268,20 @@ void ui_test_mode_init(lv_obj_t *screen) {
     lv_obj_t *pad = lv_obj_create(side);
     lv_obj_set_width(pad, LV_PCT(100));
     lv_obj_set_flex_grow(pad, 1);
-    lv_obj_set_style_bg_color(pad, lv_color_hex(0x121215), 0);
-    lv_obj_set_style_border_color(pad, lv_color_hex(0x33333b), 0);
+    lv_obj_set_style_bg_color(pad, UI_COLOR_INSET, 0);
+    lv_obj_set_style_border_color(pad, UI_COLOR_BORDER, 0);
     lv_obj_set_style_border_width(pad, 1, 0);
     lv_obj_set_style_radius(pad, 14, 0);
     lv_obj_clear_flag(pad, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(pad, touch_pad_cb, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(pad, touch_pad_cb, LV_EVENT_PRESSING, NULL);
     lv_obj_t *pad_l = lv_label_create(pad);
-    lv_label_set_text(pad_l, "TOUCH TEST - tap here");
-    lv_obj_set_style_text_font(pad_l, &lv_font_montserrat_10, 0);
-    lv_obj_set_style_text_color(pad_l, lv_color_hex(0x5a5852), 0);
+    lv_obj_set_width(pad_l, LV_PCT(100));
+    lv_label_set_long_mode(pad_l, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_align(pad_l, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_text(pad_l, "TOUCH TEST - tap or drag here. The ring should sit under your finger.");
+    lv_obj_set_style_text_font(pad_l, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(pad_l, UI_COLOR_TEXT_MUTED, 0);
     lv_obj_align(pad_l, LV_ALIGN_BOTTOM_MID, 0, 0);
 
     lv_obj_t *btns = lv_obj_create(side);
@@ -272,6 +309,17 @@ void ui_test_mode_init(lv_obj_t *screen) {
         lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
         lv_obj_remove_flag(b, LV_OBJ_FLAG_CLICKABLE); // let taps reach s_bars to close it
     }
+
+    // On the top layer so it can follow a drag anywhere on screen; not clickable, so taps
+    // still reach the widgets underneath.
+    s_touch_mark = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(s_touch_mark);
+    lv_obj_set_size(s_touch_mark, 28, 28);
+    lv_obj_set_style_radius(s_touch_mark, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_border_width(s_touch_mark, 3, 0);
+    lv_obj_set_style_border_color(s_touch_mark, UI_COLOR_ACCENT, 0);
+    lv_obj_clear_flag(s_touch_mark, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(s_touch_mark, LV_OBJ_FLAG_HIDDEN);
 
     s_timer = lv_timer_create(refresh, 1000, NULL);
     lv_timer_pause(s_timer);
