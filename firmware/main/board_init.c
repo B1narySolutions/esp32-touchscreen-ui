@@ -15,6 +15,7 @@
 #include "esp_lcd_panel_rgb.h"
 #include "esp_lcd_touch_gt911.h"
 #include "esp_lv_adapter.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -39,6 +40,7 @@ static const char *TAG = "board";
 #define LCD_VFP       3
 
 static i2c_master_bus_handle_t s_i2c_bus;
+static esp_lcd_panel_handle_t s_panel;
 static uint8_t s_backlight_pct = 100; // full brightness; the panel reads dim below this
 
 static void init_i2c(void) {
@@ -71,7 +73,9 @@ static esp_lcd_panel_handle_t init_rgb_panel(uint8_t num_fbs) {
         .data_width = 16,
         .bits_per_pixel = 16,
         .num_fbs = num_fbs,
-        .bounce_buffer_size_px = BOARD_LCD_H_RES * 20,
+        // 30 lines (Waveshare uses 20): more slack before a late refill starves the panel.
+        // Two of these live in internal RAM (~120 KB); must divide the 600-line frame evenly.
+        .bounce_buffer_size_px = BOARD_LCD_H_RES * 30,
         .sram_trans_align = 4,
         .psram_trans_align = 64,
         .hsync_gpio_num = PIN_HSYNC,
@@ -131,17 +135,20 @@ static esp_lcd_touch_handle_t init_touch(void) {
 
 lv_display_t *board_init(void) {
     const esp_lv_adapter_rotation_t rotation = ESP_LV_ADAPTER_ROTATE_0;
-    // DOUBLE_DIRECT: LVGL draws straight into the back frame buffer, then the buffers swap
-    // on VSYNC and only the redrawn areas are copied across. The adapter's RGB default
-    // (TRIPLE_PARTIAL, also what Waveshare's demo uses) instead memcpy()s the whole
-    // un-redrawn screen - ~1.2 MB PSRAM to PSRAM - after every frame, because the S3 has
-    // no DMA2D. Measured on this board: ~51 ms of a ~75 ms frame, even for a small change.
+    // DOUBLE_DIRECT: LVGL draws straight into the back frame buffer, then the buffers swap on
+    // VSYNC and only the redrawn areas are copied across. Waveshare's default (TRIPLE_PARTIAL)
+    // instead memcpy()s the whole un-redrawn screen (~1.2 MB PSRAM to PSRAM) after every frame,
+    // because the S3 has no DMA2D: ~48 ms of a ~50 ms frame, pinning core 0 at ~98 % while a
+    // finger is dragging. DOUBLE_DIRECT needs the IRAM-safe RGB ISR, 30-line bounce buffers
+    // and restart-in-VSYNC (sdkconfig.defaults) - without them the panel shifted, showed
+    // static, tore and sometimes went black. See docs/HANDOFF.md.
     const esp_lv_adapter_tear_avoid_mode_t tear = ESP_LV_ADAPTER_TEAR_AVOID_MODE_DOUBLE_DIRECT;
 
     init_i2c();
     ESP_ERROR_CHECK(io_expander_init(s_i2c_bus));
 
     esp_lcd_panel_handle_t panel = init_rgb_panel(esp_lv_adapter_get_required_frame_buffer_count(tear, rotation));
+    s_panel = panel;
     esp_lcd_touch_handle_t touch = init_touch();
 
     io_expander_write(EXIO_BL_EN, 1);
@@ -159,7 +166,13 @@ lv_display_t *board_init(void) {
         panel, NULL, BOARD_LCD_H_RES, BOARD_LCD_V_RES, rotation);
     disp_cfg.profile.use_psram = true;
     disp_cfg.tear_avoid_mode = tear; // the macro hard-codes the RGB default; must match num_fbs above
+    // With CONFIG_LCD_RGB_ISR_IRAM_SAFE the RGB driver requires the callback context (the
+    // adapter's bridge struct) to be in internal RAM, but the adapter mallocs it and malloc
+    // puts anything over CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL bytes in PSRAM - registration then
+    // fails and LVGL waits forever for VSYNC. Keep plain mallocs internal just for this call.
+    heap_caps_malloc_extmem_enable(64 * 1024);
     lv_display_t *disp = esp_lv_adapter_register_display(&disp_cfg);
+    heap_caps_malloc_extmem_enable(CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL);
     assert(disp != NULL);
 
     if (touch) {
@@ -173,6 +186,8 @@ lv_display_t *board_init(void) {
 }
 
 bool board_lvgl_lock(void) { return esp_lv_adapter_lock(-1) == ESP_OK; }
+bool board_lvgl_try_lock(int32_t timeout_ms) { return esp_lv_adapter_lock(timeout_ms) == ESP_OK; }
+esp_err_t board_restart_rgb(void) { return s_panel ? esp_lcd_rgb_panel_restart(s_panel) : ESP_ERR_INVALID_STATE; }
 void board_lvgl_unlock(void) { esp_lv_adapter_unlock(); }
 
 void board_set_backlight_pct(uint8_t pct) {
@@ -197,4 +212,21 @@ float board_battery_volts(void) {
         sum += raw;
     }
     return (sum / 4.0f) * 3.0f * 3.3f / 1023.0f;
+}
+
+esp_err_t board_check_expander(uint8_t *pins, bool *recovered) {
+    // BL_EN is left out: that pin also carries the backlight PWM, so its read-back level follows
+    // the PWM (always low at 100 % with the inverted duty), not the enable state.
+    const uint8_t mask = (1u << EXIO_TP_RST) | (1u << EXIO_LCD_RST);
+    *recovered = false;
+    esp_err_t err = io_expander_read_pins(pins);
+    if (err != ESP_OK) return err;
+    const uint8_t want = io_expander_expected();
+    if ((*pins ^ want) & mask) {
+        ESP_LOGW(TAG, "IO expander lost its outputs (pins 0x%02x, expected 0x%02x) - re-asserting",
+                 *pins, want);
+        io_expander_reassert();
+        *recovered = true;
+    }
+    return ESP_OK;
 }

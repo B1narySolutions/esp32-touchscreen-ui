@@ -199,6 +199,13 @@ static void sample_hardware(diag_snapshot_t *d) {
 
     d->backlight_pct = board_get_backlight_pct();
     d->panel_refresh_hz = board_panel_refresh_hz();
+
+    static uint32_t exio_recoveries;
+    uint8_t pins;
+    bool recovered;
+    d->exio_pins = board_check_expander(&pins, &recovered) == ESP_OK ? pins : -1;
+    if (recovered) exio_recoveries++;
+    d->exio_recoveries = exio_recoveries;
 }
 
 void diag_note_touch(int16_t x, int16_t y) {
@@ -217,10 +224,41 @@ static void json_float(char *buf, size_t n, const char *fmt, float v) {
     else snprintf(buf, n, fmt, v);
 }
 
+// LVGL watchdog. The LVGL task holds the adapter lock for the whole of each refresh, and in
+// DOUBLE_DIRECT mode it blocks inside flush until the panel's VSYNC. If the RGB scan-out ever
+// stops, LVGL blocks forever: the screen goes black and touch stops being processed, while
+// everything else keeps running. Detect that by probing the lock; after 2 s, dump the task
+// states once and restart the RGB scan-out.
+static uint32_t s_lvgl_stuck_s, s_rgb_restarts;
+
+static void check_lvgl(void) {
+    if (board_lvgl_try_lock(300)) {
+        board_lvgl_unlock();
+        if (s_lvgl_stuck_s) ESP_LOGW(TAG, "LVGL task responsive again after %lus", (unsigned long)s_lvgl_stuck_s);
+        s_lvgl_stuck_s = 0;
+        return;
+    }
+    s_lvgl_stuck_s++;
+    ESP_LOGW(TAG, "LVGL task unresponsive for %lus", (unsigned long)s_lvgl_stuck_s);
+    if (s_lvgl_stuck_s == 2) {
+#if CONFIG_FREERTOS_USE_TRACE_FACILITY && CONFIG_FREERTOS_USE_STATS_FORMATTING_FUNCTIONS
+        static char list[2048];
+        vTaskList(list);
+        printf("TASKS (name state prio stack_free num core)\n%s", list);
+#endif
+    }
+    if (s_lvgl_stuck_s >= 2) {
+        esp_err_t err = board_restart_rgb();
+        s_rgb_restarts++;
+        ESP_LOGW(TAG, "restarted RGB scan-out (%s), restart #%lu", esp_err_to_name(err), (unsigned long)s_rgb_restarts);
+    }
+}
+
 static void stream_task(void *arg) {
     (void)arg;
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(1000));
+        check_lvgl();
 
         portENTER_CRITICAL(&s_perf_mux);
         ui_perf_t p = s_perf_acc;
@@ -234,6 +272,8 @@ static void stream_task(void *arg) {
         d.frame_avg_ms = p.frame_us / 1000.0f / nf;
         d.frame_max_ms = p.frame_max_us / 1000.0f;
         d.tap_ms = p.tap_us / 1000.0f;
+        d.lvgl_stuck_s = s_lvgl_stuck_s;
+        d.rgb_restarts = s_rgb_restarts;
         portENTER_CRITICAL(&s_snap_mux);
         s_snap = d;
         portEXIT_CRITICAL(&s_snap_mux);
@@ -251,6 +291,7 @@ static void stream_task(void *arg) {
                "\"cpu\":[%s,%s],"
                "\"heap\":%lu,\"heap_min\":%lu,\"heap_big\":%lu,\"psram\":%lu,\"psram_total\":%lu,"
                "\"temp\":%s,\"vbat\":%.2f,\"vbat_min\":%.2f,\"vbat_max\":%.2f,\"bl\":%u,"
+               "\"exio\":%d,\"exio_lost\":%lu,\"lvgl_stuck\":%lu,\"rgb_restarts\":%lu,"
                "\"panel_hz\":%.1f,\"fps\":%lu,"
                "\"touches\":%lu,\"tx\":%d,\"ty\":%d,"
                "\"ui\":{\"frame_avg\":%.1f,\"frame_max\":%.1f,\"flush\":%.1f,\"wait\":%.1f,"
@@ -264,6 +305,8 @@ static void stream_task(void *arg) {
                (unsigned long)d.heap_largest_block, (unsigned long)d.psram_free,
                (unsigned long)d.psram_total,
                temp, d.battery_v, d.battery_v_min, d.battery_v_max, d.backlight_pct,
+               d.exio_pins, (unsigned long)d.exio_recoveries,
+               (unsigned long)d.lvgl_stuck_s, (unsigned long)d.rgb_restarts,
                d.panel_refresh_hz, (unsigned long)d.redraws_per_s,
                (unsigned long)d.touches, d.last_touch_x, d.last_touch_y,
                d.frame_avg_ms, d.frame_max_ms, p.flush_us / 1000.0 / nf,

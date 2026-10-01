@@ -24,6 +24,10 @@ typedef struct {
     float       battery_v_min;   // range over the last DIAG_BATT_WINDOW_S readings;
     float       battery_v_max;   //   a wide swing usually means no battery is attached
     uint8_t     backlight_pct;
+    int16_t     exio_pins;       // IO expander pin levels as read back; -1 if the read failed
+    uint32_t    exio_recoveries; // times the expander had lost its outputs and was re-asserted
+    uint32_t    lvgl_stuck_s;    // seconds the LVGL task has been unresponsive (0 = healthy)
+    uint32_t    rgb_restarts;    // times the watchdog restarted the RGB scan-out
     float       panel_refresh_hz;
     // UI frame timing over the last second, measured around LVGL's display events.
     uint32_t    redraws_per_s;

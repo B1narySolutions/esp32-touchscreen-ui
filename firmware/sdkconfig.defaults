@@ -43,3 +43,11 @@ CONFIG_LV_FONT_MONTSERRAT_24=y
 # Per-core CPU load in Test Mode / the DIAG line (idle-task run time, 1 us esp_timer clock).
 CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y
 CONFIG_FREERTOS_RUN_TIME_STATS_USING_ESP_TIMER=y
+
+# RGB scan-out robustness. In DOUBLE_DIRECT LVGL renders straight into the PSRAM frame
+# buffer, competing with the bounce-buffer refills for the PSRAM bus; when a refill is late
+# the image shifts, shows static, or the panel loses sync. Keep the refill ISR (and the GDMA
+# ISR it relies on) in IRAM so it never waits on a PSRAM instruction fetch, and re-sync the
+# DMA every VSYNC so a late refill can't leave a permanent offset.
+CONFIG_LCD_RGB_ISR_IRAM_SAFE=y
+CONFIG_LCD_RGB_RESTART_IN_VSYNC=y

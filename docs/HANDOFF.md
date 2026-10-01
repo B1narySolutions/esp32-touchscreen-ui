@@ -48,11 +48,20 @@ of the `DIAG` line and in Test Mode.
 
 | Setting | Frame time (small change) | Tap to frame | Notes |
 |---|---|---|---|
-| `TRIPLE_PARTIAL` (adapter + Waveshare default) | ~75 ms | ~80 ms | ~51 ms of it is a CPU memcpy of the whole un-redrawn screen (~1.2 MB PSRAM to PSRAM) every frame - the S3 has no DMA2D |
-| `DOUBLE_DIRECT` (now) | ~27-50 ms | ~36 ms median | LVGL draws straight into the back frame buffer; only dirty areas are synced. Most of the "flush" time is now the VSYNC wait |
+| `TRIPLE_PARTIAL` (adapter + Waveshare default) | ~50-75 ms | ~50-80 ms | ~48 ms of it is a CPU memcpy of the whole un-redrawn screen (~1.2 MB PSRAM to PSRAM) every frame - the S3 has no DMA2D. Dragging a finger pins core 0 at ~98 %; min free internal RAM fell to 7.8 KB with the ported UI |
+| `DOUBLE_DIRECT` (**current**, LVGL task on core 1) | ~35-50 ms | ~13-60 ms | LVGL draws straight into the back frame buffer, so it competes with the bounce-buffer refills for the PSRAM bus. Without the settings below, the image shifted (top slice at the bottom), showed static while dragging, tore, and sometimes went black (panel lost sync, LVGL blocked waiting for VSYNC). **Stable with**: `CONFIG_LCD_RGB_ISR_IRAM_SAFE=y` (refill ISR never waits on a PSRAM instruction fetch), `CONFIG_LCD_RGB_RESTART_IN_VSYNC=y`, and 30-line bounce buffers - 18 min of use with no stalls, ~60 KB min free internal RAM, ~20 % CPU per core while dragging. |
 
-Also: LVGL task pinned to core 1 (core 0 takes the RGB bounce-buffer ISR); internal RAM free
-went 72 KB -> 175 KB. Remaining ceilings and leads:
+IRAM-safe ISR gotcha: the RGB driver then insists its callback context is in internal RAM, but
+esp_lvgl_adapter mallocs its bridge struct (PSRAM by default here), so `board_init.c` raises the
+malloc-internal threshold just around `esp_lv_adapter_register_display()`. If you see
+"user context not in internal RAM" at boot, that guard is missing and the display will hang.
+
+The diag task now has a watchdog (`check_lvgl()` in `diag.c`): if the LVGL lock can't be taken
+for 2 s it prints the FreeRTOS task list and restarts the RGB scan-out; `lvgl_stuck` /
+`rgb_restarts` in the DIAG line count this. If the screen goes dark, grab the serial log: the
+task list shows what was blocked.
+
+Remaining ceilings and leads:
 
 - **Panel refresh is only ~26 Hz**: 24 MHz pclk / (1386 x 661 incl. porches), Waveshare's timings.
   Raising pclk (e.g. 30 MHz) is the next lever; watch for the image shifting (PSRAM bandwidth) and

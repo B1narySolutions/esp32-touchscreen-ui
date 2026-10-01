@@ -16,3 +16,10 @@ esp_err_t io_expander_write(uint8_t pin, uint8_t level);
 esp_err_t io_expander_set_backlight(uint8_t pct);
 // Raw 10-bit reading of the battery sense divider; see board_battery_volts().
 esp_err_t io_expander_read_adc(uint16_t *out);
+
+// Pin levels as the expander reports them (input register). For our output pins this should
+// equal io_expander_expected(); if it doesn't, the expander has lost its configuration.
+esp_err_t io_expander_read_pins(uint8_t *out);
+uint8_t io_expander_expected(void);
+// Rewrites mode, outputs and backlight PWM from the driver's cached values.
+esp_err_t io_expander_reassert(void);
