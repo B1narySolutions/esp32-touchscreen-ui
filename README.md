@@ -5,12 +5,13 @@ a per-effect knob panel, and a single shared vertical slider that's the only
 way any value ever gets adjusted (no dragging knobs directly — that was the
 sponsor's #1 requirement).
 
-An interactive browser prototype of this exact design (built to sign off the
-UX before touching firmware) is here:
-**https://claude.ai/artifact/6wB1xEdoNvxQipXzX5eYNE**
-Open it and try: tap AMP's knobs to open the slider, tap a bypassed chip once
-to select it and again to toggle bypass, and drag a chip's grip to reorder
+An interactive browser prototype of the design lives in `preview/index.html`
+(a single self-contained file — open it in a browser, or drag the `preview`
+folder onto Netlify to host it). Try: tap a knob to open the slider, tap a
+chip once to select it and again to toggle bypass, and drag a chip to reorder
 the chain.
+
+**New here (or a new Claude session)? Read `docs/HANDOFF.md` first.**
 
 ## The two interactions the sponsor asked for
 
