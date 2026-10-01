@@ -1,0 +1,797 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Multi-FX Console Prototype</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+*{box-sizing:border-box;}
+html,body{margin:0;height:100%;background:#0b0b0d;font-family:'Manrope',sans-serif;overflow:hidden;}
+button{font-family:inherit;}
+input[type=range]{-webkit-appearance:none;appearance:none;background:transparent;height:26px;}
+input[type=range]::-webkit-slider-runnable-track{height:10px;border-radius:6px;}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:24px;height:24px;border-radius:50%;background:#fff;border:4px solid var(--accent,#e8b463);margin-top:-7px;box-shadow:0 2px 6px rgba(0,0,0,.45);cursor:pointer;}
+input[type=range]::-moz-range-track{height:10px;border-radius:6px;background:transparent;}
+input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:#fff;border:4px solid var(--accent,#e8b463);cursor:pointer;}
+input[type=range].v-slider{writing-mode:vertical-lr;direction:rtl;width:58px;height:226px;}
+input[type=range].v-slider::-webkit-slider-runnable-track{width:14px;border-radius:8px;}
+input[type=range].v-slider::-webkit-slider-thumb{width:32px;height:32px;margin-left:-9px;margin-top:0;}
+input[type=range].v-slider::-moz-range-track{width:14px;border-radius:8px;}
+.fx-rail{overflow-x:auto;scrollbar-width:thin;}
+.fx-rail::-webkit-scrollbar{height:5px;}
+.fx-rail::-webkit-scrollbar-thumb{background:#2c2c33;border-radius:3px;}
+.model-cards{overflow-x:auto;scrollbar-width:thin;}
+.model-cards::-webkit-scrollbar{height:4px;}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script type="module">
+import { html, render, Component } from 'https://cdn.jsdelivr.net/npm/htm@3.1.1/preact/standalone.module.js';
+
+const EFFECTS = {
+  gate:    { label:'GATE',    color:'#5ecdbb', knobs:[{key:'thresh',label:'THRESHOLD'},{key:'attack',label:'ATTACK'},{key:'release',label:'RELEASE'},{key:'range',label:'RANGE'}] },
+  comp:    { label:'COMP',    color:'#d9b26a', knobs:[{key:'thresh',label:'THRESHOLD'},{key:'ratio',label:'RATIO'},{key:'attack',label:'ATTACK'},{key:'release',label:'RELEASE'},{key:'gain',label:'GAIN'}] },
+  drive:   { label:'DRIVE',   color:'#e2795c', modelKey:'drive', knobs:[{key:'gain',label:'GAIN'},{key:'tone',label:'TONE'},{key:'level',label:'LEVEL'}] },
+  amp:     { label:'AMP',     color:'#e9c98a', modelKey:'amp', knobs:[{key:'gain',label:'GAIN'},{key:'bass',label:'BASS'},{key:'mid',label:'MIDDLE'},{key:'treble',label:'TREBLE'},{key:'level',label:'LEVEL'}] },
+  chorus:  { label:'CHORUS',  color:'#7fa3e0', modelKey:'chorus', knobs:[{key:'rate',label:'RATE'},{key:'depth',label:'DEPTH'},{key:'mix',label:'MIX'}] },
+  delay:   { label:'DELAY',   color:'#8b6fd8', modelKey:'delay', knobs:[{key:'time',label:'TIME'},{key:'feedback',label:'FEEDBACK'},{key:'tone',label:'TONE'},{key:'mix',label:'MIX'}] },
+  reverb:  { label:'REVERB',  color:'#b07fe0', modelKey:'reverb', knobs:[{key:'decay',label:'DECAY'},{key:'predelay',label:'PRE-DELAY'},{key:'tone',label:'TONE'},{key:'mix',label:'MIX'}] },
+  eq:      { label:'EQ',      color:'#7fd9a8', knobs:[{key:'low',label:'LOW'},{key:'mid',label:'MID'},{key:'high',label:'HIGH'},{key:'level',label:'LEVEL'}] },
+  octave:  { label:'OCTAVE',  color:'#e05c8a', knobs:[{key:'mix',label:'MIX'},{key:'octUp',label:'OCT UP'},{key:'octDown',label:'OCT DOWN'}] },
+  phaser:  { label:'PHASER',  color:'#5cc9e0', knobs:[{key:'rate',label:'RATE'},{key:'depth',label:'DEPTH'},{key:'mix',label:'MIX'}] },
+  tremolo: { label:'TREMOLO', color:'#d9c95c', modelKey:'tremolo', knobs:[{key:'rate',label:'RATE'},{key:'depth',label:'DEPTH'}] },
+  cab:     { label:'CAB',     color:'#8fb0c4', fixed:true, hasCurve:true, subtitle:'IMPULSE RESPONSE', modelKey:'cab', knobs:[{key:'lowcut',label:'LOW CUT'},{key:'highcut',label:'HIGH CUT'},{key:'level',label:'LEVEL'}] }
+};
+
+const IR_PARAMS = {
+  '1x12 Open Back':    { lo:95, hi:5800, peaks:[{f:2200,g:3,w:.6},{f:400,g:-2,w:.8}] },
+  '2x12 Blue Alnico':  { lo:85, hi:7200, peaks:[{f:3500,g:4,w:.5},{f:180,g:1.5,w:.6}] },
+  '4x12 Greenback':    { lo:75, hi:5200, peaks:[{f:2200,g:5,w:.4},{f:120,g:2,w:.5},{f:4200,g:-3,w:.4}] },
+  '4x12 V30 Modern':   { lo:80, hi:6500, peaks:[{f:3200,g:6,w:.35},{f:1200,g:-2,w:.6},{f:120,g:1,w:.6}] },
+  'User IR 01':        { lo:70, hi:8000, peaks:[{f:2800,g:3,w:.7},{f:600,g:-1.5,w:.7}] }
+};
+
+function irCurve(irName, lowcut, highcut, W, H, color) {
+  const p = IR_PARAMS[irName] || IR_PARAMS['4x12 Greenback'];
+  const userLo = 20 * Math.pow(15, lowcut / 100);
+  const userHi = 3000 * Math.pow(6.5, highcut / 100);
+  const lo = Math.log10(20), span = Math.log10(20000) - lo;
+  const db = (f) => {
+    let d = -10 * Math.log10(1 + Math.pow(p.lo / f, 4)) - 10 * Math.log10(1 + Math.pow(f / p.hi, 6));
+    d += -10 * Math.log10(1 + Math.pow(userLo / f, 4)) - 10 * Math.log10(1 + Math.pow(f / userHi, 6));
+    p.peaks.forEach((k) => { d += k.g * Math.exp(-0.5 * Math.pow(Math.log2(f / k.f) / k.w, 2)); });
+    return d;
+  };
+  const yOf = (d) => Math.max(0, Math.min(H, ((10 - d) / 46) * H));
+  let path = '';
+  for (let i = 0; i <= 80; i++) {
+    const f = Math.pow(10, lo + (span * i) / 80);
+    path += (i ? 'L' : 'M') + ((i / 80) * W).toFixed(1) + ' ' + yOf(db(f)).toFixed(1);
+  }
+  const xOf = (f) => ((Math.log10(f) - lo) / span) * W;
+  return { line: path, area: path + `L${W} ${H}L0 ${H}Z`, zeroY: yOf(0), grid: [100, 1000, 10000].map((f) => ({ x: xOf(f), label: f >= 1000 ? f / 1000 + 'k' : String(f) })), color };
+}
+
+const ALL_EFFECT_IDS = ['gate','comp','eq','drive','amp','octave','chorus','phaser','tremolo','delay','reverb'];
+
+const MODEL_OPTIONS = {
+  amp: [
+    { name: "Fender '65 Twin Reverb", desc: "Glassy clean headroom with built-in spring reverb character." },
+    { name: "Vox AC30", desc: "Chimey British top-boost with fast breakup." },
+    { name: "Marshall Plexi", desc: "Classic crunch that pushes into rock saturation." },
+    { name: "Mesa Rectifier", desc: "High-gain modern voicing with a tight low end." }
+  ],
+  drive: [
+    { name: "Tube Screamer", desc: "Mid-forward overdrive with a smooth, compressed clip." },
+    { name: "Big Muff", desc: "Thick fuzz-saturated sustain, a wall-of-sound voicing." },
+    { name: "Klon-style", desc: "Transparent boost that keeps your amp's own tone." },
+    { name: "Rat Distortion", desc: "Aggressive clipping with a gritty, raw edge." }
+  ],
+  chorus: [
+    { name: "Classic Chorus", desc: "Lush stereo shimmer, the '80s studio staple." },
+    { name: "Dimension", desc: "Subtle width and depth without an obvious pitch wobble." },
+    { name: "Ensemble", desc: "Dense multi-voice modulation for a string-like swirl." }
+  ],
+  delay: [
+    { name: "Digital Delay", desc: "Clean, precise repeats with no character added." },
+    { name: "Tape Echo", desc: "Warm, saturated echoes that degrade slightly each repeat." },
+    { name: "Ping-Pong", desc: "Repeats alternate left/right for a wide stereo bounce." }
+  ],
+  reverb: [
+    { name: "Hall", desc: "Large, spacious decay for orchestral-scale ambience." },
+    { name: "Room", desc: "Tight, natural early reflections for a close, live feel." },
+    { name: "Plate", desc: "Bright, dense metallic shimmer, a classic studio reverb." },
+    { name: "Spring", desc: "Splashy, boingy character straight out of an amp tank." }
+  ],
+  tremolo: [
+    { name: "Sine", desc: "Smooth, rounded volume pulsing." },
+    { name: "Square", desc: "Hard on/off chop for a staggered, choppy feel." },
+    { name: "Triangle", desc: "Linear ramp between loud and soft." }
+  ],
+  cab: [
+    { name: "1x12 Open Back", desc: "Airy, focused combo cab with a scooped low end." },
+    { name: "2x12 Blue Alnico", desc: "Sparkly, chimey voice with smooth, open highs." },
+    { name: "4x12 Greenback", desc: "Warm, mid-forward classic rock cabinet." },
+    { name: "4x12 V30 Modern", desc: "Tight, aggressive top end built for high gain." },
+    { name: "User IR 01", desc: "Custom impulse response loaded from SD card." }
+  ]
+};
+
+const MODEL_VALUES = {
+  "Fender '65 Twin Reverb": { gain:25, bass:55, mid:50, treble:60, level:60 },
+  "Vox AC30":               { gain:45, bass:45, mid:60, treble:65, level:62 },
+  "Marshall Plexi":         { gain:62, bass:55, mid:58, treble:68, level:66 },
+  "Mesa Rectifier":         { gain:82, bass:60, mid:35, treble:72, level:70 },
+  "Tube Screamer":          { gain:45, tone:60, level:60 },
+  "Big Muff":               { gain:75, tone:45, level:50 },
+  "Klon-style":             { gain:30, tone:55, level:65 },
+  "Rat Distortion":         { gain:70, tone:50, level:55 },
+  "Classic Chorus":         { rate:35, depth:50, mix:40 },
+  "Dimension":              { rate:20, depth:30, mix:35 },
+  "Ensemble":               { rate:55, depth:70, mix:50 },
+  "Digital Delay":          { time:45, feedback:38, tone:60, mix:35 },
+  "Tape Echo":              { time:55, feedback:50, tone:40, mix:38 },
+  "Ping-Pong":              { time:40, feedback:45, tone:55, mix:40 },
+  "Hall":                   { decay:65, predelay:25, tone:55, mix:35 },
+  "Room":                   { decay:25, predelay:10, tone:50, mix:28 },
+  "Plate":                  { decay:50, predelay:15, tone:65, mix:32 },
+  "Spring":                 { decay:35, predelay:5,  tone:45, mix:30 },
+  "Sine":                   { rate:40, depth:45 },
+  "Square":                 { rate:55, depth:70 },
+  "Triangle":               { rate:45, depth:55 },
+  "1x12 Open Back":         { lowcut:20, highcut:70, level:55 },
+  "2x12 Blue Alnico":       { lowcut:18, highcut:78, level:55 },
+  "4x12 Greenback":         { lowcut:25, highcut:60, level:58 },
+  "4x12 V30 Modern":        { lowcut:35, highcut:58, level:60 },
+  "User IR 01":             { lowcut:20, highcut:70, level:55 }
+};
+
+const DEFAULT_KNOBS = {
+  gate:{thresh:35,attack:20,release:40,range:70},
+  comp:{thresh:45,ratio:55,attack:25,release:50,gain:50},
+  drive:{gain:40,tone:60,level:55},
+  amp:{gain:32,bass:50,mid:45,treble:71,level:65},
+  chorus:{rate:35,depth:50,mix:40},
+  delay:{time:45,feedback:38,tone:55,mix:35},
+  reverb:{decay:55,predelay:20,tone:60,mix:42},
+  eq:{low:50,mid:50,high:50,level:60},
+  octave:{mix:40,octUp:30,octDown:20},
+  phaser:{rate:35,depth:45,mix:35},
+  tremolo:{rate:40,depth:45},
+  cab:{lowcut:20,highcut:70,level:55}
+};
+
+const DEFAULT_STATE_MAP = {
+  gate:'bypass', comp:'bypass', drive:'bypass', amp:'on', chorus:'bypass', delay:'bypass',
+  reverb:'bypass', eq:'bypass', octave:'bypass', phaser:'bypass', tremolo:'bypass', cab:'on'
+};
+const DEFAULT_MODELS = {
+  amp:"Fender '65 Twin Reverb", drive:'Tube Screamer', chorus:'Classic Chorus',
+  delay:'Digital Delay', reverb:'Hall', tremolo:'Sine', cab:'1x12 Open Back'
+};
+
+const PRESETS = [
+  {
+    name: 'Clean Rhythm', tagline: 'Bright clean tone for verses',
+    chainOrder: ['gate','comp','drive','amp','chorus','delay','reverb'],
+    effectState: { gate:'on', comp:'on', drive:'bypass', amp:'on', chorus:'on', delay:'bypass', reverb:'on' },
+    knobValues: {
+      gate:{thresh:20,attack:10,release:30,range:50},
+      comp:{thresh:40,ratio:40,attack:20,release:45,gain:45},
+      amp:{gain:25,bass:55,mid:50,treble:60,level:60},
+      chorus:{rate:25,depth:35,mix:25},
+      reverb:{decay:40,predelay:15,tone:55,mix:25},
+      cab:{lowcut:20,highcut:70,level:55}
+    },
+    models: { amp: "Fender '65 Twin Reverb", cab: '1x12 Open Back' }
+  },
+  {
+    name: 'Crunch Rock', tagline: 'Driven rhythm with amp-like grit',
+    chainOrder: ['gate','comp','drive','amp','chorus','delay','reverb'],
+    effectState: { gate:'on', comp:'bypass', drive:'on', amp:'on', chorus:'bypass', delay:'bypass', reverb:'on' },
+    knobValues: {
+      drive:{gain:55,tone:58,level:60},
+      amp:{gain:58,bass:52,mid:55,treble:66,level:68},
+      reverb:{decay:30,predelay:10,tone:50,mix:18},
+      cab:{lowcut:25,highcut:65,level:58}
+    },
+    models: { drive: 'Tube Screamer', amp: 'Marshall Plexi', cab: '4x12 Greenback' }
+  },
+  {
+    name: 'Lead Boost', tagline: 'Singing sustain for solos',
+    chainOrder: ['gate','comp','drive','amp','delay','chorus','reverb'],
+    effectState: { gate:'on', comp:'on', drive:'on', amp:'on', delay:'on', chorus:'bypass', reverb:'on' },
+    knobValues: {
+      comp:{thresh:50,ratio:60,attack:15,release:40,gain:55},
+      drive:{gain:70,tone:65,level:70},
+      amp:{gain:75,bass:48,mid:60,treble:68,level:72},
+      delay:{time:35,feedback:30,tone:50,mix:22},
+      reverb:{decay:45,predelay:15,tone:55,mix:20},
+      cab:{lowcut:30,highcut:60,level:60}
+    },
+    models: { drive: 'Klon-style', amp: 'Mesa Rectifier', delay: 'Digital Delay', reverb: 'Hall', cab: '4x12 V30 Modern' }
+  },
+  {
+    name: 'Ambient Wash', tagline: 'Spacious pads and long tails',
+    chainOrder: ['gate','comp','amp','chorus','drive','delay','reverb'],
+    effectState: { gate:'bypass', comp:'on', amp:'on', chorus:'on', drive:'bypass', delay:'on', reverb:'on' },
+    knobValues: {
+      comp:{thresh:42,ratio:35,attack:25,release:50,gain:40},
+      amp:{gain:18,bass:50,mid:40,treble:55,level:55},
+      chorus:{rate:45,depth:70,mix:55},
+      delay:{time:65,feedback:60,tone:45,mix:50},
+      reverb:{decay:80,predelay:30,tone:50,mix:60},
+      cab:{lowcut:15,highcut:85,level:52}
+    },
+    models: { amp: 'Vox AC30', chorus: 'Ensemble', delay: 'Tape Echo', reverb: 'Hall', cab: '2x12 Blue Alnico' }
+  },
+  {
+    name: 'Metal Tight', tagline: 'Palm-muted precision, tight low end',
+    chainOrder: ['gate','comp','drive','amp','eq','chorus','delay','reverb'],
+    effectState: { gate:'on', comp:'on', drive:'on', amp:'on', eq:'on', chorus:'bypass', delay:'bypass', reverb:'bypass' },
+    knobValues: {
+      gate:{thresh:55,attack:5,release:20,range:85},
+      comp:{thresh:35,ratio:30,attack:10,release:25,gain:40},
+      drive:{gain:85,tone:50,level:65},
+      amp:{gain:88,bass:45,mid:35,treble:70,level:75},
+      eq:{low:40,mid:35,high:55,level:58},
+      cab:{lowcut:45,highcut:55,level:62}
+    },
+    models: { drive: 'Rat Distortion', amp: 'Mesa Rectifier', cab: '4x12 V30 Modern' }
+  }
+];
+
+const cloneDefaults = (map) => JSON.parse(JSON.stringify(map));
+const kv = (k, v) => { const o = {}; o[k] = v; return o; };
+const BASE_W = 1024, BASE_H = 600;
+
+const btnReset = 'all:unset;cursor:pointer;';
+const ghostBtn = btnReset + 'background:#1c1c21;border:1px solid #2c2c33;border-radius:9px;padding:11px 20px;font-size:13px;font-weight:700;color:#d8d4c9;';
+const monoLabel = "font-family:'IBM Plex Mono',monospace;";
+
+function ringStyle(color, value, size) {
+  const sweep = (value * 0.75).toFixed(2);
+  return `width:${size}px;height:${size}px;border-radius:50%;background:conic-gradient(from -135deg, ${color} 0%, ${color} ${sweep}%, #33333a ${sweep}%, #33333a 75%, transparent 75%, transparent 100%);`;
+}
+function knobSize(count) { return count <= 2 ? 148 : count === 3 ? 132 : count === 4 ? 118 : 104; }
+function estimateOutLevel(def, values) {
+  for (const c of ['level', 'gain', 'mix']) {
+    if (def.knobs.some((k) => k.key === c)) return values[c];
+  }
+  const keys = def.knobs.map((k) => k.key);
+  return keys.length ? Math.round(keys.reduce((a, k) => a + values[k], 0) / keys.length) : 50;
+}
+function switchStyle(on) {
+  return btnReset + `display:block;width:46px;height:26px;border-radius:14px;background:${on ? '#e8b463' : '#2c2c33'};position:relative;transition:background .15s ease;`;
+}
+function knobToggleStyle(on) {
+  return `width:20px;height:20px;border-radius:50%;background:#fff;position:absolute;top:3px;left:${on ? '23px' : '3px'};transition:left .15s ease;`;
+}
+
+class App extends Component {
+  constructor(props) {
+    super(props);
+    this.state = {
+      chainOrder: ['gate','comp','drive','amp','chorus','delay','reverb'],
+      effectState: Object.assign({}, DEFAULT_STATE_MAP),
+      selectedId: 'amp',
+      knobValues: cloneDefaults(DEFAULT_KNOBS),
+      models: Object.assign({}, DEFAULT_MODELS),
+      draggedIndex: null,
+      activeSlider: null,
+      settingsOpen: false,
+      presetsOpen: false,
+      catalogOpen: false,
+      presetName: 'Preset 1',
+      dirty: false,
+      masterVolume: 63,
+      muted: false,
+      backlight: 80,
+      wifiOn: true,
+      bleOn: true,
+      batteryPct: 78,
+      scale: 1,
+      testOpen: false,
+      serialState: 'idle',
+      serialError: '',
+      diag: null,
+      diagAt: 0,
+      now: Date.now()
+    };
+    this.port = null;
+    this.reader = null;
+    this.onResize = () => {
+      this.setState({ scale: Math.min(window.innerWidth / BASE_W, window.innerHeight / BASE_H) });
+    };
+  }
+
+  componentDidMount() {
+    this.onResize();
+    window.addEventListener('resize', this.onResize);
+    this.clock = setInterval(() => { if (this.state.testOpen) this.setState({ now: Date.now() }); }, 1000);
+  }
+  componentWillUnmount() {
+    window.removeEventListener('resize', this.onResize);
+    clearInterval(this.clock);
+    this.disconnectDevice();
+  }
+
+  connectDevice = async () => {
+    if (!('serial' in navigator)) {
+      this.setState({ serialState: 'error', serialError: 'This browser has no Web Serial. Use Chrome or Edge on a computer.' });
+      return;
+    }
+    try {
+      this.port = await navigator.serial.requestPort();
+      await this.port.open({ baudRate: 115200 });
+      // Opening toggles DTR/RTS, which is wired to EN/BOOT on ESP32 boards; release them so it runs.
+      await this.port.setSignals({ dataTerminalReady: false, requestToSend: false });
+      this.setState({ serialState: 'connected', serialError: '' });
+      this.readLoop();
+    } catch (err) {
+      this.port = null;
+      if (err && err.name === 'NotFoundError') return;
+      this.setState({ serialState: 'error', serialError: String(err && err.message || err) });
+    }
+  };
+
+  readLoop = async () => {
+    const decoder = new TextDecoder();
+    let buf = '';
+    try {
+      while (this.port && this.port.readable) {
+        this.reader = this.port.readable.getReader();
+        try {
+          for (;;) {
+            const { value, done } = await this.reader.read();
+            if (done) break;
+            buf += decoder.decode(value, { stream: true });
+            let nl;
+            while ((nl = buf.indexOf('\n')) >= 0) {
+              const line = buf.slice(0, nl).trim();
+              buf = buf.slice(nl + 1);
+              const at = line.indexOf('DIAG {');
+              if (at < 0) continue;
+              try { this.setState({ diag: JSON.parse(line.slice(at + 5)), diagAt: Date.now() }); } catch (_) {}
+            }
+          }
+        } finally {
+          this.reader.releaseLock();
+          this.reader = null;
+        }
+      }
+    } catch (err) {
+      this.setState({ serialState: 'error', serialError: 'Lost connection to the board: ' + (err && err.message || err) });
+    }
+  };
+
+  disconnectDevice = async () => {
+    try { if (this.reader) await this.reader.cancel(); } catch (_) {}
+    try { if (this.port) await this.port.close(); } catch (_) {}
+    this.port = null;
+    this.setState({ serialState: 'idle', diag: null });
+  };
+
+  diagnostics(s) {
+    const d = s.diag;
+    const dash = '—';
+    const kb = (b) => `${Math.round(b / 1024)} KB`;
+    const hms = (t) => `${String(Math.floor(t / 3600)).padStart(2, '0')}:${String(Math.floor(t / 60) % 60).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`;
+    const esp = [
+      ['Uptime', d ? hms(d.up) : dash],
+      ['Reset reason', d ? d.rst : dash],
+      ['ESP-IDF', d ? d.idf : dash],
+      ['Free internal heap', d ? kb(d.heap) : dash],
+      ['Min free heap (since boot)', d ? kb(d.heap_min) : dash],
+      ['Largest free block', d ? kb(d.heap_big) : dash],
+      ['Free PSRAM', d ? `${(d.psram / 1048576).toFixed(2)} MB of ${(d.psram_total / 1048576).toFixed(2)} MB` : dash],
+      ['Chip temperature', d ? (d.temp === null ? 'sensor unavailable' : `${d.temp.toFixed(1)} °C`) : dash],
+      ['Battery', d ? (d.vbat < 0 ? 'read failed' : `${d.vbat.toFixed(2)} V`) : dash],
+      ['Backlight PWM', d ? `${d.bl} %` : dash],
+      ['UI redraws / s', d ? String(d.fps) : dash],
+      ['Touch', d ? (d.tx < 0 ? `${d.touches} taps` : `${d.touches} taps, last (${d.tx}, ${d.ty})`) : dash]
+    ];
+    const sd = d && d.seed;
+    const on = !!(sd && sd.conn);
+    const seed = [
+      ['Link', d ? (on ? 'Connected' : 'Not connected') : dash],
+      ['Packets TX / RX', on ? `${sd.tx} / ${sd.rx}` : dash],
+      ['Link errors', on ? String(sd.err) : dash],
+      ['Round-trip latency', on ? `${sd.rtt.toFixed(2)} ms` : dash],
+      ['DSP firmware', on ? sd.fw : dash],
+      ['Sample rate / block', on ? `${sd.sr} Hz / ${sd.blk}` : dash],
+      ['DSP CPU load', on ? `${sd.cpu.toFixed(1)} %` : dash],
+      ['NAM model', on ? sd.nam : dash],
+      ['Input peak', on ? `${sd.inpk.toFixed(1)} dBFS` : dash],
+      ['Output peak', on ? `${sd.outpk.toFixed(1)} dBFS` : dash],
+      ['Clips since boot', on ? String(sd.clips) : dash]
+    ];
+    return { esp, seed, seedOn: on };
+  }
+
+  selectEffect = (id) => () => {
+    this.setState((s) => {
+      if (s.selectedId !== id) return { selectedId: id };
+      const next = Object.assign({}, s.effectState);
+      next[id] = next[id] === 'on' ? 'bypass' : 'on';
+      return { effectState: next, dirty: true };
+    });
+  };
+  onDragStart = (idx) => (e) => {
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', String(idx));
+    this.setState({ draggedIndex: idx });
+  };
+  onDragOver = (idx) => (e) => {
+    e.preventDefault();
+    this.setState((s) => {
+      if (s.draggedIndex === null || s.draggedIndex === idx) return null;
+      const order = s.chainOrder.slice();
+      const moved = order.splice(s.draggedIndex, 1)[0];
+      order.splice(idx, 0, moved);
+      return { chainOrder: order, draggedIndex: idx, dirty: true };
+    });
+  };
+  onDrop = (e) => { e.preventDefault(); this.setState({ draggedIndex: null }); };
+  onDragEnd = () => { this.setState({ draggedIndex: null }); };
+
+  openSlider = (effectId, knobKey, label, color) => () => {
+    const value = this.state.knobValues[effectId][knobKey];
+    this.setState({ activeSlider: { effectId, knobKey, label, color, value } });
+  };
+  closeSlider = () => this.setState({ activeSlider: null });
+  commitSliderValue = (pct) => {
+    this.setState((s) => {
+      if (!s.activeSlider) return null;
+      const kvals = JSON.parse(JSON.stringify(s.knobValues));
+      kvals[s.activeSlider.effectId][s.activeSlider.knobKey] = pct;
+      return { knobValues: kvals, activeSlider: Object.assign({}, s.activeSlider, { value: pct }), dirty: true };
+    });
+  };
+  onSliderInput = (e) => this.commitSliderValue(parseInt(e.target.value, 10));
+  nudgeSlider = (delta) => () => {
+    this.commitSliderValue(Math.max(0, Math.min(100, this.state.activeSlider.value + delta)));
+  };
+  pickModel = (modelKey, name) => () => {
+    this.setState((s) => {
+      const knobValues = JSON.parse(JSON.stringify(s.knobValues));
+      knobValues[modelKey] = Object.assign({}, knobValues[modelKey], MODEL_VALUES[name]);
+      return { models: Object.assign({}, s.models, kv(modelKey, name)), knobValues, dirty: true };
+    });
+  };
+
+  applyPreset = (preset) => () => {
+    const knobValues = cloneDefaults(DEFAULT_KNOBS);
+    Object.keys(preset.knobValues).forEach((id) => {
+      knobValues[id] = Object.assign({}, knobValues[id], preset.knobValues[id]);
+    });
+    const effectState = Object.assign({}, DEFAULT_STATE_MAP, preset.effectState);
+    const models = Object.assign({}, DEFAULT_MODELS, preset.models || {});
+    this.setState({
+      chainOrder: preset.chainOrder.slice(), effectState, knobValues, models,
+      selectedId: preset.chainOrder[0], presetName: preset.name, presetsOpen: false, dirty: false
+    });
+  };
+
+  toggleCatalogEffect = (id) => () => {
+    this.setState((s) => {
+      const inChain = s.chainOrder.indexOf(id) !== -1;
+      let order = s.chainOrder.slice();
+      let selectedId = s.selectedId;
+      if (inChain) {
+        if (order.length <= 1) return null;
+        order = order.filter((x) => x !== id);
+        if (selectedId === id) selectedId = order[0];
+      } else {
+        order.push(id);
+      }
+      return { chainOrder: order, selectedId, dirty: true };
+    });
+  };
+
+  stop = (e) => e.stopPropagation();
+
+  render(_, s) {
+    const currentDef = EFFECTS[s.selectedId];
+    const currentColor = currentDef.color;
+    const size = currentDef.hasCurve ? 104 : knobSize(currentDef.knobs.length);
+    const inset = Math.round(size * 0.115);
+    const hasModel = !!currentDef.modelKey;
+    const outPct = estimateOutLevel(currentDef, s.knobValues[s.selectedId]);
+    const outColor = outPct > 85 ? '#e2705c' : outPct > 60 ? '#e8c463' : '#7fd9a8';
+    const masterShown = s.muted ? 0 : s.masterVolume;
+    const batColor = s.batteryPct > 30 ? '#7fd9a8' : s.batteryPct > 15 ? '#e8c463' : '#e2705c';
+    const a = s.activeSlider;
+    const fillH = (c, v) => `background:linear-gradient(to top, ${c} 0%, ${c} ${v}%, #2b2b31 ${v}%, #2b2b31 100%);`;
+    const fillW = (v) => `background:linear-gradient(to right, #e8b463 0%, #e8b463 ${v}%, #2b2b31 ${v}%, #2b2b31 100%);`;
+    const backdrop = 'position:absolute;inset:0;background:rgba(6,6,8,0.64);display:flex;z-index:100;';
+    const cardBase = 'position:relative;background:#1c1c21;border:1px solid rgba(255,255,255,0.08);border-radius:22px;box-shadow:0 34px 70px -22px rgba(0,0,0,.65);';
+    const closeX = (fn, extra) => html`<button onClick=${fn} aria-label="Close" style="${btnReset}${extra}">✕</button>`;
+
+    return html`
+<div style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#0b0b0d;">
+<div style="width:${BASE_W}px;height:${BASE_H}px;flex-shrink:0;transform:scale(${s.scale});transform-origin:center;position:relative;overflow:hidden;background:#101013;color:#eee8dd;display:flex;flex-direction:column;user-select:none;">
+
+  <div style="height:60px;flex-shrink:0;display:flex;align-items:center;justify-content:space-between;padding:0 28px;background:#17171c;border-bottom:1px solid #26262c;">
+    <div style="display:flex;align-items:center;gap:12px;">
+      <span style="${monoLabel}font-size:11px;letter-spacing:.12em;color:#78746c;">PRESET</span>
+      <span style="font-size:18px;font-weight:800;">${s.presetName}</span>
+      ${s.dirty && html`<span style="${monoLabel}font-size:10px;letter-spacing:.08em;color:#101013;background:#e8b463;padding:3px 8px;border-radius:5px;font-weight:600;">EDITED</span>`}
+    </div>
+    <div style="display:flex;align-items:center;gap:20px;">
+      <div style="display:flex;align-items:center;gap:6px;">
+        <div style="width:7px;height:7px;border-radius:50%;background:${s.wifiOn ? '#7fd9a8' : '#54525a'};"></div>
+        <span style="font-size:11px;color:#8f8b82;">Wi-Fi</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;">
+        <div style="width:7px;height:7px;border-radius:50%;background:${s.bleOn ? '#7fd9a8' : '#54525a'};"></div>
+        <span style="font-size:11px;color:#8f8b82;">BLE</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;">
+        <div style="width:20px;height:11px;border:1.5px solid #6b6862;border-radius:3px;padding:1.5px;position:relative;">
+          <div style="height:100%;border-radius:1px;width:${s.batteryPct}%;background:${batColor};"></div>
+          <div style="position:absolute;right:-4px;top:3px;width:2px;height:5px;background:#6b6862;border-radius:0 2px 2px 0;"></div>
+        </div>
+        <span style="font-size:11px;color:#8f8b82;">${s.batteryPct}%</span>
+      </div>
+      <button onClick=${() => this.setState({ dirty: false })} style="${btnReset}background:#e8b463;color:#161409;font-weight:700;font-size:13px;letter-spacing:.03em;padding:9px 22px;border-radius:9px;">SAVE</button>
+    </div>
+  </div>
+
+  <div style="height:112px;flex-shrink:0;display:flex;align-items:center;background:#131316;border-bottom:1px solid #212126;">
+  <div class="fx-rail" style="flex:1;min-width:0;height:100%;display:flex;align-items:center;gap:14px;padding:0 20px 0 28px;">
+    ${s.chainOrder.map((id, idx) => {
+      const def = EFFECTS[id];
+      const sel = s.selectedId === id;
+      const on = s.effectState[id] === 'on';
+      return html`<button key=${id} draggable="true"
+        onClick=${this.selectEffect(id)}
+        onDragStart=${this.onDragStart(idx)}
+        onDragOver=${this.onDragOver(idx)}
+        onDrop=${this.onDrop}
+        onDragEnd=${this.onDragEnd}
+        style="width:118px;height:82px;flex-shrink:0;border-radius:14px;background:#1b1b1f;border:2px solid ${sel ? def.color : 'rgba(255,255,255,0.07)'};display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;position:relative;opacity:${s.draggedIndex === idx ? '0.35' : '1'};transition:opacity .15s ease;${sel ? `box-shadow:0 0 0 1px ${def.color}, 0 8px 18px -8px ${def.color};` : ''}">
+        <div style="position:absolute;top:8px;left:11px;font-size:11px;letter-spacing:1px;color:#454349;">≡</div>
+        <div style="font-size:13px;font-weight:700;letter-spacing:.03em;color:${on || sel ? '#eee8dd' : '#6a6870'};">${def.label}</div>
+        <div style="display:flex;align-items:center;gap:5px;margin-top:3px;">
+          <div style="width:7px;height:7px;border-radius:50%;background:${on ? def.color : '#4a4850'};"></div>
+          <div style="${monoLabel}font-size:9px;letter-spacing:.06em;color:${on ? '#8f8b82' : '#55535a'};">${on ? 'ON' : 'BYPASS'}</div>
+        </div>
+      </button>`;
+    })}
+    <button onClick=${() => this.setState({ catalogOpen: true })} aria-label="Add effect" style="${btnReset}width:56px;height:82px;flex-shrink:0;border-radius:14px;border:2px dashed #33333b;display:flex;align-items:center;justify-content:center;color:#5a5852;font-size:22px;">+</button>
+  </div>
+  <div style="flex-shrink:0;height:100%;display:flex;align-items:center;gap:14px;padding:0 28px 0 18px;border-left:1px solid #26262c;background:#131316;">
+    <div style="font-size:16px;color:#3a383f;">›</div>
+    ${(() => {
+      const def = EFFECTS.cab;
+      const sel = s.selectedId === 'cab';
+      const on = s.effectState.cab === 'on';
+      return html`<button onClick=${this.selectEffect('cab')} style="width:118px;height:82px;flex-shrink:0;border-radius:14px;background:#1b1b1f;border:2px solid ${sel ? def.color : 'rgba(255,255,255,0.07)'};display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;position:relative;${sel ? `box-shadow:0 0 0 1px ${def.color}, 0 8px 18px -8px ${def.color};` : ''}">
+        <div style="position:absolute;top:8px;left:11px;${monoLabel}font-size:8.5px;letter-spacing:.08em;color:#454349;">IR</div>
+        <div style="font-size:13px;font-weight:700;letter-spacing:.03em;color:${on || sel ? '#eee8dd' : '#6a6870'};">${def.label}</div>
+        <div style="display:flex;align-items:center;gap:5px;margin-top:3px;">
+          <div style="width:7px;height:7px;border-radius:50%;background:${on ? def.color : '#4a4850'};"></div>
+          <div style="${monoLabel}font-size:9px;letter-spacing:.06em;color:${on ? '#8f8b82' : '#55535a'};">${on ? 'ON' : 'BYPASS'}</div>
+        </div>
+      </button>`;
+    })()}
+  </div>
+  </div>
+
+  <div style="flex:1;display:flex;overflow:hidden;">
+    <div style="flex:1;padding:22px 24px 14px 32px;display:flex;flex-direction:column;gap:14px;overflow:hidden;">
+      <div style="display:flex;align-items:center;gap:14px;">
+        <div style="width:10px;height:10px;border-radius:3px;background:${currentColor};"></div>
+        <span style="font-size:15px;font-weight:800;letter-spacing:.08em;">${currentDef.label}</span>
+        ${currentDef.subtitle && html`<span style="${monoLabel}font-size:10px;letter-spacing:.1em;color:#78746c;">${currentDef.subtitle}</span>`}
+      </div>
+
+      ${hasModel && html`<div class="model-cards" style="display:flex;gap:10px;">
+        ${MODEL_OPTIONS[currentDef.modelKey].map((opt) => {
+          const isSel = s.models[currentDef.modelKey] === opt.name;
+          return html`<button key=${opt.name} onClick=${this.pickModel(currentDef.modelKey, opt.name)} style="${btnReset}flex-shrink:0;width:${MODEL_OPTIONS[currentDef.modelKey].length > 4 ? 160 : 168}px;padding:11px 13px;border-radius:11px;background:#1c1c21;border:1.5px solid ${isSel ? currentColor : '#28282e'};">
+            <div style="font-size:12.5px;font-weight:700;margin-bottom:3px;color:${isSel ? currentColor : '#d8d4c9'};">${opt.name}</div>
+            <div style="font-size:10.5px;line-height:1.35;color:#8f8b82;">${opt.desc}</div>
+          </button>`;
+        })}
+      </div>`}
+
+      <div style="flex:1;display:flex;align-items:center;gap:24px;">
+      <div style="flex:1;display:flex;align-items:center;justify-content:space-evenly;">
+        ${currentDef.knobs.map((k) => {
+          const value = s.knobValues[s.selectedId][k.key];
+          return html`<div key=${s.selectedId + k.key} style="display:flex;flex-direction:column;align-items:center;">
+            <button onClick=${this.openSlider(s.selectedId, k.key, k.label, currentColor)} style="${btnReset}position:relative;${ringStyle(currentColor, value, size)}">
+              <div style="position:absolute;inset:${inset}px;border-radius:50%;background:#151417;display:flex;align-items:center;justify-content:center;">
+                <span style="${monoLabel}font-size:16px;font-weight:600;color:#eee8dd;">${value}%</span>
+              </div>
+            </button>
+            <div style="margin-top:12px;font-size:12px;letter-spacing:.04em;color:#9c988e;">${k.label}</div>
+          </div>`;
+        })}
+      </div>
+      ${currentDef.hasCurve && (() => {
+        const W = 340, H = 150;
+        const kv2 = s.knobValues.cab;
+        const c = irCurve(s.models.cab, kv2.lowcut, kv2.highcut, W, H, currentColor);
+        return html`<div style="flex-shrink:0;width:${W}px;">
+          <div style="${monoLabel}font-size:9.5px;letter-spacing:.1em;color:#78746c;margin-bottom:8px;">FREQUENCY RESPONSE · ${s.models.cab.toUpperCase()}</div>
+          <svg viewBox="0 0 ${W} ${H}" width=${W} height=${H} style="display:block;background:#151417;border-radius:10px;border:1px solid #222227;">
+            ${c.grid.map((g) => html`<line key=${g.label} x1=${g.x} x2=${g.x} y1="0" y2=${H} stroke="#26262c" />`)}
+            <line x1="0" x2=${W} y1=${c.zeroY} y2=${c.zeroY} stroke="#2e2e35" stroke-dasharray="3 4" />
+            <path d=${c.area} fill=${c.color} fill-opacity="0.13" />
+            <path d=${c.line} fill="none" stroke=${c.color} stroke-width="2" stroke-linejoin="round" />
+            ${c.grid.map((g) => html`<text key=${'t' + g.label} x=${g.x + 4} y=${H - 6} fill="#5a5852" font-size="9" font-family="IBM Plex Mono, monospace">${g.label}</text>`)}
+          </svg>
+        </div>`;
+      })()}
+      </div>
+    </div>
+
+    <div style="width:64px;flex-shrink:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;border-left:1px solid #1c1c20;">
+      <div style="display:flex;gap:7px;align-items:flex-end;height:180px;">
+        <div style="width:8px;height:100%;border-radius:4px;background:#1e1e22;position:relative;overflow:hidden;">
+          <div style="position:absolute;bottom:0;left:0;width:100%;height:46%;background:#5c8ee0;"></div>
+        </div>
+        <div style="width:8px;height:100%;border-radius:4px;background:#1e1e22;position:relative;overflow:hidden;">
+          <div style="position:absolute;bottom:0;left:0;width:100%;height:${outPct}%;background:${outColor};"></div>
+        </div>
+      </div>
+      <div style="display:flex;gap:11px;">
+        <span style="font-size:8.5px;letter-spacing:.04em;color:#5a5852;">IN</span>
+        <span style="font-size:8.5px;letter-spacing:.04em;color:#5a5852;">OUT</span>
+      </div>
+    </div>
+  </div>
+
+  <div style="height:82px;flex-shrink:0;display:flex;align-items:center;gap:22px;padding:0 28px;background:#17171c;border-top:1px solid #26262c;">
+    <button onClick=${() => this.setState({ presetsOpen: true })} style="${ghostBtn}">Presets</button>
+    <button onClick=${() => this.setState({ settingsOpen: true })} style="${ghostBtn}">Settings</button>
+    <div style="flex:1;display:flex;align-items:center;gap:16px;">
+      <span style="${monoLabel}font-size:11px;letter-spacing:.1em;color:#78746c;">MASTER</span>
+      <input type="range" min="0" max="100" value=${s.masterVolume} onInput=${(e) => this.setState({ masterVolume: parseInt(e.target.value, 10), muted: false })} aria-label="Master volume" style="--accent:#e8b463;flex:1;${fillW(masterShown)}" />
+      <span style="${monoLabel}font-size:13px;width:42px;color:#d8d4c9;">${masterShown}%</span>
+    </div>
+    <button onClick=${() => this.setState((st) => ({ muted: !st.muted }))} style="${btnReset}background:${s.muted ? '#e2705c' : '#1c1c21'};border:1px solid ${s.muted ? '#e2705c' : '#2c2c33'};border-radius:9px;padding:11px 18px;font-size:12px;font-weight:700;letter-spacing:.03em;color:${s.muted ? '#1a1a1a' : '#d8d4c9'};">MUTE</button>
+  </div>
+
+  ${a && html`<div onClick=${this.closeSlider} style="${backdrop}align-items:center;justify-content:center;">
+    <div onClick=${this.stop} style="${cardBase}width:200px;padding:26px 22px 20px;display:flex;flex-direction:column;align-items:center;gap:16px;">
+      ${closeX(this.closeSlider, 'position:absolute;top:12px;right:14px;font-size:14px;color:#78746c;')}
+      <div style="${monoLabel}font-size:12px;letter-spacing:.1em;color:#9c988e;">${a.label}</div>
+      <div style="font-size:28px;font-weight:700;color:${a.color};">${a.value}%</div>
+      <input type="range" class="v-slider" min="0" max="100" value=${a.value} onInput=${this.onSliderInput} aria-label=${a.label} style="--accent:${a.color};${fillH(a.color, a.value)}" />
+      <div style="display:flex;gap:14px;margin-top:2px;">
+        <button onClick=${this.nudgeSlider(-1)} aria-label="Decrease" style="${btnReset}width:38px;height:38px;border-radius:50%;background:#26262c;font-size:18px;display:flex;align-items:center;justify-content:center;color:#d8d4c9;">−</button>
+        <button onClick=${this.nudgeSlider(1)} aria-label="Increase" style="${btnReset}width:38px;height:38px;border-radius:50%;background:#26262c;font-size:18px;display:flex;align-items:center;justify-content:center;color:#d8d4c9;">+</button>
+      </div>
+      <div style="font-size:10px;color:#5a5852;">tap outside to close</div>
+    </div>
+  </div>`}
+
+  ${s.settingsOpen && html`<div onClick=${() => this.setState({ settingsOpen: false })} style="${backdrop}align-items:center;justify-content:center;">
+    <div onClick=${this.stop} style="${cardBase}width:400px;padding:28px;display:flex;flex-direction:column;gap:22px;">
+      ${closeX(() => this.setState({ settingsOpen: false }), 'position:absolute;top:16px;right:18px;font-size:15px;color:#78746c;')}
+      <div style="font-size:16px;font-weight:800;">Settings</div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <span style="${monoLabel}font-size:11px;letter-spacing:.1em;color:#78746c;">BACKLIGHT</span>
+        <div style="display:flex;align-items:center;gap:14px;">
+          <input type="range" min="10" max="100" value=${s.backlight} onInput=${(e) => this.setState({ backlight: parseInt(e.target.value, 10) })} aria-label="Backlight brightness" style="--accent:#e8b463;flex:1;${fillW(s.backlight)}" />
+          <span style="${monoLabel}font-size:13px;width:40px;">${s.backlight}%</span>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;">
+        <span style="font-size:14px;color:#d8d4c9;">Wi-Fi</span>
+        <button onClick=${() => this.setState((st) => ({ wifiOn: !st.wifiOn }))} style="${switchStyle(s.wifiOn)}"><div style="${knobToggleStyle(s.wifiOn)}"></div></button>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;">
+        <span style="font-size:14px;color:#d8d4c9;">Bluetooth</span>
+        <button onClick=${() => this.setState((st) => ({ bleOn: !st.bleOn }))} style="${switchStyle(s.bleOn)}"><div style="${knobToggleStyle(s.bleOn)}"></div></button>
+      </div>
+    </div>
+  </div>`}
+
+  ${s.presetsOpen && html`<div onClick=${() => this.setState({ presetsOpen: false })} style="${backdrop}">
+    <div onClick=${this.stop} style="width:300px;height:100%;background:#18181d;border-right:1px solid #2c2c33;padding:24px 0;display:flex;flex-direction:column;box-shadow:20px 0 50px -20px rgba(0,0,0,.6);">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:0 22px 18px;border-bottom:1px solid #24242a;">
+        <span style="font-size:15px;font-weight:800;">Presets</span>
+        ${closeX(() => this.setState({ presetsOpen: false }), 'font-size:14px;color:#78746c;')}
+      </div>
+      <div style="overflow-y:auto;flex:1;">
+        ${PRESETS.map((p) => html`<button key=${p.name} onClick=${this.applyPreset(p)} style="${btnReset}display:block;width:100%;padding:14px 22px;border-bottom:1px solid #1f1f24;">
+          <div style="font-size:13.5px;font-weight:700;color:${s.presetName === p.name ? '#e8b463' : '#eee8dd'};">${p.name}</div>
+          <div style="font-size:11px;color:#8f8b82;margin-top:3px;">${p.tagline}</div>
+        </button>`)}
+      </div>
+      <div style="padding:14px 22px 0;border-top:1px solid #24242a;">
+        <div style="${monoLabel}font-size:9.5px;letter-spacing:.12em;color:#5a5852;margin-bottom:8px;">DEVELOPER</div>
+        <button onClick=${() => this.setState({ presetsOpen: false, testOpen: true })} style="${btnReset}display:flex;align-items:center;justify-content:space-between;width:100%;padding:12px 14px;border-radius:10px;background:#211c1c;border:1px solid #3a2a2a;">
+          <span style="font-size:13px;font-weight:700;color:#e2705c;">Test Mode</span>
+          <span style="${monoLabel}font-size:9.5px;color:#8f8b82;">ESP32 + SEED3</span>
+        </button>
+      </div>
+    </div>
+  </div>`}
+
+  ${s.testOpen && (() => {
+    const d = this.diagnostics(s);
+    const row = ([k, v]) => html`<div key=${k} style="display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid #1f1f24;">
+      <span style="font-size:11.5px;color:#8f8b82;">${k}</span>
+      <span style="${monoLabel}font-size:11.5px;color:#eee8dd;text-align:right;">${v}</span>
+    </div>`;
+    const panel = 'flex:1;min-width:0;background:#16161a;border:1px solid #26262c;border-radius:14px;padding:14px 16px;display:flex;flex-direction:column;';
+    const head = (title, sub, dot) => html`<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+      <div style="width:8px;height:8px;border-radius:50%;background:${dot};"></div>
+      <span style="font-size:13px;font-weight:800;letter-spacing:.04em;">${title}</span>
+      <span style="${monoLabel}font-size:9.5px;color:#5a5852;">${sub}</span>
+    </div>`;
+    const live = s.serialState === 'connected';
+    const age = s.diag ? Math.round((s.now - s.diagAt) / 1000) : null;
+    const stale = age !== null && age > 3;
+    const status = !live ? 'Not connected to a board'
+      : !s.diag ? 'Connected · waiting for data from the board…'
+      : stale ? `Connected · no data for ${age}s` : 'Live · updating every second';
+    const statusColor = !live ? '#8f8b82' : (!s.diag || stale) ? '#e8c463' : '#7fd9a8';
+    return html`<div style="position:absolute;inset:0;z-index:150;background:#0e0e11;display:flex;flex-direction:column;padding:16px 22px;gap:12px;">
+      <div style="display:flex;align-items:center;gap:12px;">
+        <span style="${monoLabel}font-size:10px;letter-spacing:.1em;color:#101013;background:#e2705c;padding:4px 9px;border-radius:5px;font-weight:700;">TEST MODE</span>
+        <span style="font-size:15px;font-weight:800;">Diagnostics</span>
+        <div style="width:7px;height:7px;border-radius:50%;background:${statusColor};"></div>
+        <span style="${monoLabel}font-size:10px;color:${statusColor};">${status}</span>
+        <div style="flex:1;"></div>
+        <button onClick=${live ? this.disconnectDevice : this.connectDevice} style="${btnReset}background:#1c1c21;border:1px solid #2c2c33;color:#d8d4c9;font-weight:700;font-size:12px;padding:9px 16px;border-radius:9px;">${live ? 'Disconnect' : 'Connect board (USB)'}</button>
+        <button onClick=${() => this.setState({ testOpen: false })} style="${btnReset}background:#e8b463;color:#161409;font-weight:700;font-size:12px;padding:9px 16px;border-radius:9px;">Exit Test Mode</button>
+      </div>
+      ${s.serialError && html`<div style="font-size:11px;color:#e2705c;background:#231616;border-radius:8px;padding:8px 12px;">${s.serialError}</div>`}
+      ${!live && !s.serialError && html`<div style="font-size:11px;line-height:1.5;color:#8f8b82;background:#16161a;border:1px solid #26262c;border-radius:8px;padding:8px 12px;">
+        This page shows real readings from the board, nothing simulated. Plug the board's <b style="color:#d8d4c9;">USB TO UART</b> port into this computer, click <b style="color:#d8d4c9;">Connect board (USB)</b> and pick its COM port. Needs Chrome or Edge on a computer. Close any serial monitor first, since only one program can use the port at a time.
+      </div>`}
+      <div style="flex:1;display:flex;gap:12px;min-height:0;">
+        <div style="${panel}">
+          ${head('ESP32-S3', 'UI BOARD', s.diag && !stale ? '#7fd9a8' : '#4a4850')}
+          <div style="overflow-y:auto;">${d.esp.map(row)}</div>
+        </div>
+        <div style="${panel}">
+          ${head('SEED3 · NAM', 'DSP BOARD', d.seedOn ? '#7fd9a8' : '#e2705c')}
+          ${s.diag && !d.seedOn && html`<div style="font-size:10.5px;line-height:1.4;color:#e2a05c;background:#231d16;border-radius:8px;padding:8px 10px;margin:4px 0 6px;">The board reports no link to the Daisy Seed yet. These fields fill in once the ESP32 ↔ SEED3 link is wired and its protocol is implemented.</div>`}
+          <div style="overflow-y:auto;">${d.seed.map(row)}</div>
+        </div>
+      </div>
+      <div style="${monoLabel}font-size:9.5px;color:#5a5852;">Touch test, colour bars and the backlight check run on the board's own Test Mode screen (Menu → Test Mode); their results show up here.</div>
+    </div>`;
+  })()}
+
+  ${s.catalogOpen && html`<div onClick=${() => this.setState({ catalogOpen: false })} style="${backdrop}align-items:center;justify-content:center;">
+    <div onClick=${this.stop} style="${cardBase}width:420px;max-height:480px;padding:24px;display:flex;flex-direction:column;gap:14px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;">
+        <span style="font-size:16px;font-weight:800;">Add / Remove Effects</span>
+        ${closeX(() => this.setState({ catalogOpen: false }), 'font-size:15px;color:#78746c;')}
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;overflow-y:auto;">
+        ${ALL_EFFECT_IDS.map((id) => {
+          const def = EFFECTS[id];
+          const inChain = s.chainOrder.indexOf(id) !== -1;
+          return html`<button key=${id} onClick=${this.toggleCatalogEffect(id)} style="${btnReset}display:flex;align-items:center;gap:12px;padding:11px 14px;border-radius:10px;background:#212126;">
+            <div style="width:9px;height:9px;border-radius:3px;background:${def.color};flex-shrink:0;"></div>
+            <span style="flex:1;font-size:13px;font-weight:600;color:#d8d4c9;">${def.label}</span>
+            <span style="${monoLabel}font-size:9.5px;letter-spacing:.05em;padding:4px 9px;border-radius:6px;${inChain ? `background:${def.color};color:#101013;font-weight:700;` : 'background:#2c2c33;color:#9c988e;'}">${inChain ? 'IN CHAIN' : 'ADD'}</span>
+          </button>`;
+        })}
+      </div>
+      <div style="font-size:10px;color:#5a5852;text-align:center;">tap outside to close · more than 7 effects scroll horizontally in the chain</div>
+    </div>
+  </div>`}
+
+</div>
+</div>`;
+  }
+}
+
+render(html`<${App} />`, document.getElementById('app'));
+</script>
+</body>
+</html>

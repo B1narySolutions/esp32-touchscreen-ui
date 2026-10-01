@@ -1,0 +1,35 @@
+<component xmlns="http://lvgl.io/xml">
+    <api>
+        <prop name="master_value" type="int32_t" default="63" min="0" max="100"/>
+        <prop name="is_muted"     type="bool"    default="false"/>
+    </api>
+
+    <view extends="lv_obj" width="100%" height="82" style_bg_color="$color_panel"
+          style_border_side="TOP" style_border_color="0x26262c"
+          style_pad_left="28" style_pad_right="28">
+
+        <lv_button name="presets_btn" width="110" height="40" align="LEFT_MID"
+                    style_bg_color="$color_card" style_border_width="1" style_border_color="$color_border">
+            <lv_label text="Presets" align="CENTER"/>
+        </lv_button>
+
+        <lv_button name="settings_btn" width="110" height="40" align="LEFT_MID" x="122"
+                    style_bg_color="$color_card" style_border_width="1" style_border_color="$color_border">
+            <lv_label text="Settings" align="CENTER"/>
+        </lv_button>
+
+        <lv_label name="master_caption" text="MASTER" align="CENTER" x="-140"
+                   style_text_font="font_mono_12" style_text_color="0x78746c"/>
+
+        <lv_slider name="master_slider" width="360" height="10" align="CENTER" x="10"
+                   value="$master_value" min_value="0" max_value="100"
+                   style_bg_color="0x2b2b31" style_indicator_bg_color="$color_accent"
+                   style_knob_bg_color="0xffffff" style_knob_border_width="4"
+                   style_knob_border_color="$color_accent"/>
+
+        <lv_button name="mute_btn" width="90" height="40" align="RIGHT_MID"
+                    style_bg_color="$color_card" style_border_width="1" style_border_color="$color_border">
+            <lv_label text="MUTE" align="CENTER"/>
+        </lv_button>
+    </view>
+</component>

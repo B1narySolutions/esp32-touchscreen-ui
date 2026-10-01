@@ -1,0 +1,25 @@
+<component xmlns="http://lvgl.io/xml">
+    <api>
+        <prop name="preset_name" type="string" default="Preset 1"/>
+        <prop name="is_dirty"    type="bool"   default="false"/>
+    </api>
+
+    <view extends="lv_obj" width="100%" height="60" style_bg_color="$color_panel"
+          style_border_width="0" style_pad_left="28" style_pad_right="28" style_pad_all="0"
+          style_border_side="BOTTOM" style_border_color="0x26262c">
+
+        <lv_label name="preset_label" text="PRESET" align="LEFT_MID"
+                   style_text_font="font_mono_12" style_text_color="0x78746c"/>
+        <lv_label name="preset_name_label" text="$preset_name" align="LEFT_MID" x="70"
+                   style_text_font="font_body_bold_15"/>
+        <lv_label name="edited_badge" text="EDITED" align="LEFT_MID" x="160"
+                   style_bg_color="$color_accent" style_bg_opa="255" style_text_color="0x101013"
+                   style_pad_hor="8" style_pad_ver="3" style_radius="5"
+                   style_text_font="font_mono_12"/>
+
+        <lv_button name="save_btn" width="100" height="38" align="RIGHT_MID"
+                    style_bg_color="$color_accent" style_radius="9">
+            <lv_label text="SAVE" align="CENTER" style_text_color="0x161409"/>
+        </lv_button>
+    </view>
+</component>

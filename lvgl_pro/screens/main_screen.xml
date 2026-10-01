@@ -1,0 +1,65 @@
+<screen xmlns="http://lvgl.io/xml">
+    <!--
+        Single-page layout, 1024x600, four fixed rows + two overlays. The 7 effect_chip
+        instances below are a static starting layout (gate,comp,drive,amp,chorus,delay,
+        reverb) matching the reference photo; ui_main.c re-parents them at runtime into
+        whatever order the user drags them into, so this file only needs to instantiate
+        one of each - it does not need to express the reorder itself.
+    -->
+    <view extends="lv_obj" width="1024" height="600" style_bg_color="$color_bg" style_pad_all="0">
+
+        <top_bar name="top_bar" preset_name="Preset 1" is_dirty="false" align="TOP_MID"/>
+
+        <lv_obj name="chain_rail" width="100%" height="112" align="TOP_MID" y="60"
+                style_bg_color="$color_rail" style_pad_left="28" style_pad_top="15"
+                layout="FLEX" flex_flow="ROW" style_pad_column="20">
+            <effect_chip name="chip_gate"   fx_label="GATE"   fx_color="$color_gate"   is_on="false" is_selected="false"/>
+            <effect_chip name="chip_comp"   fx_label="COMP"   fx_color="$color_comp"   is_on="false" is_selected="false"/>
+            <effect_chip name="chip_drive"  fx_label="DRIVE"  fx_color="$color_drive"  is_on="false" is_selected="false"/>
+            <effect_chip name="chip_amp"    fx_label="AMP"    fx_color="$color_amp"    is_on="true"  is_selected="true"/>
+            <effect_chip name="chip_chorus" fx_label="CHORUS" fx_color="$color_chorus" is_on="false" is_selected="false"/>
+            <effect_chip name="chip_delay"  fx_label="DELAY"  fx_color="$color_delay"  is_on="false" is_selected="false"/>
+            <effect_chip name="chip_reverb" fx_label="REVERB" fx_color="$color_reverb" is_on="false" is_selected="false"/>
+        </lv_obj>
+
+        <lv_obj name="fx_panel" width="100%" height="346" align="TOP_MID" y="172"
+                style_bg_color="$color_bg" style_pad_hor="32" style_pad_top="22">
+
+            <lv_label name="fx_panel_title" text="AMP" align="TOP_LEFT"
+                       style_text_font="font_body_bold_15" style_text_color="$color_amp"/>
+
+            <lv_dropdown name="fx_model_dropdown" width="220" height="36" align="TOP_LEFT" x="90"
+                          options="Fender '65 Twin Reverb\nVox AC30\nMarshall Plexi\nMesa Rectifier"
+                          style_bg_color="$color_card" style_border_width="1" style_border_color="$color_border"/>
+
+            <!--
+                Knob row: this static markup is the AMP effect's 5 knobs. ui_main.c swaps
+                the child set of #knob_row for whichever effect is selected, driven by the
+                EFFECTS table in ui_effects_data.c so all 7 effects share this one component.
+            -->
+            <lv_obj name="knob_row" width="100%" height="220" align="BOTTOM_MID"
+                    style_bg_opa="0" layout="FLEX" flex_flow="ROW"
+                    style_flex_main_place="SPACE_EVENLY" style_flex_cross_place="CENTER">
+                <knob_ring name="knob_gain"   knob_label="GAIN"   knob_color="$color_amp" knob_value="32"/>
+                <knob_ring name="knob_bass"   knob_label="BASS"   knob_color="$color_amp" knob_value="50"/>
+                <knob_ring name="knob_mid"    knob_label="MIDDLE" knob_color="$color_amp" knob_value="45"/>
+                <knob_ring name="knob_treble" knob_label="TREBLE" knob_color="$color_amp" knob_value="71"/>
+                <knob_ring name="knob_level"  knob_label="LEVEL"  knob_color="$color_amp" knob_value="65"/>
+            </lv_obj>
+        </lv_obj>
+
+        <bottom_bar name="bottom_bar" master_value="63" is_muted="false" align="BOTTOM_MID"/>
+
+        <!-- Slider overlay: backdrop + the one shared vertical_slider instance, both hidden by default -->
+        <lv_obj name="slider_backdrop" width="100%" height="100%" align="TOP_LEFT"
+                style_bg_color="0x06060a" style_bg_opa="160" flag_hidden="true"/>
+        <vertical_slider name="slider_popup" slider_label="GAIN" slider_color="$color_amp"
+                          slider_value="32"/>
+
+        <!-- Settings overlay: same backdrop pattern, panel built in ui_main.c (backlight + wifi + BLE) -->
+        <lv_obj name="settings_backdrop" width="100%" height="100%" align="TOP_LEFT"
+                style_bg_color="0x06060a" style_bg_opa="160" flag_hidden="true"/>
+        <lv_obj name="settings_panel" width="400" height="260" align="CENTER"
+                style_bg_color="$color_card" style_radius="22" flag_hidden="true"/>
+    </view>
+</screen>

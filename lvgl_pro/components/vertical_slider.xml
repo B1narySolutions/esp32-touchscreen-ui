@@ -1,0 +1,54 @@
+<component xmlns="http://lvgl.io/xml">
+    <!--
+        THE multipurpose slider. One instance lives on the main screen, hidden by default.
+        ui_vertical_slider.c shows it (LV_OBJ_FLAG_HIDDEN off) and re-targets it whenever
+        any knob is tapped, and hides it again on:
+          - a click on the full-screen backdrop behind it (tap off to dismiss)
+          - the X button
+        Dragging the lv_slider thumb, tapping the track, and the +/- buttons all update
+        the same bound value; ui_vertical_slider.c writes that value back into whichever
+        knob_ring instance opened it (and to the real DSP parameter).
+    -->
+    <api>
+        <prop name="slider_label" type="string" default="GAIN"/>
+        <prop name="slider_color" type="color"  default="0xe8b463"/>
+        <prop name="slider_value" type="int32_t" default="50" min="0" max="100"/>
+    </api>
+
+    <view extends="lv_obj" width="200" height="320" name="card" align="CENTER"
+          style_bg_color="$color_card" style_radius="22" style_border_width="1"
+          style_border_color="0x33333b" style_pad_all="20" flag_hidden="true">
+
+        <lv_button name="close_btn" width="28" height="28" align="TOP_RIGHT"
+                    style_radius="100" style_bg_opa="0">
+            <lv_label text="&#10005;" align="CENTER" style_text_color="$color_text_dim"/>
+        </lv_button>
+
+        <lv_label name="label" text="$slider_label" align="TOP_MID" y="20"
+                   style_text_font="font_mono_12" style_text_color="$color_text_dim"/>
+
+        <lv_label name="value_text" text="$slider_value" align="TOP_MID" y="44"
+                   style_text_font="font_value_18" style_text_color="$slider_color"/>
+
+        <lv_slider name="track" width="58" height="220" align="CENTER" y="10"
+                   mode="NORMAL" dir="VER" value="$slider_value" min_value="0" max_value="100"
+                   style_bg_color="0x2b2b31" style_indicator_bg_color="$slider_color"
+                   style_knob_bg_color="0xffffff" style_knob_border_width="4"
+                   style_knob_border_color="$slider_color"/>
+
+        <lv_button name="minus_btn" width="38" height="38" align="BOTTOM_LEFT" x="20" y="-8"
+                    style_radius="100" style_bg_color="0x26262c">
+            <lv_label text="-" align="CENTER"/>
+        </lv_button>
+        <lv_button name="plus_btn" width="38" height="38" align="BOTTOM_RIGHT" x="-20" y="-8"
+                    style_radius="100" style_bg_color="0x26262c">
+            <lv_label text="+" align="CENTER"/>
+        </lv_button>
+    </view>
+
+    <!--
+        The full-screen dim backdrop is a plain lv_obj created once on the main screen,
+        placed directly BEHIND this card in z-order and given LV_EVENT_CLICKED ->
+        vertical_slider_close(). See ui_main.c: build_slider_overlay().
+    -->
+</component>

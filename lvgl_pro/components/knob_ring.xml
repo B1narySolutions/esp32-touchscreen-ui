@@ -1,0 +1,32 @@
+<component xmlns="http://lvgl.io/xml">
+    <!--
+        A single "knob" in the effect panel. It renders as a 270-degree lv_arc (never
+        dragged directly - the sponsor's #1 requirement) and only exists to show the
+        current value and to be tapped. ui_knob.c attaches LV_EVENT_CLICKED, which opens
+        the vertical_slider popup (see vertical_slider.xml) pre-loaded with this knob's
+        id/label/color/value.
+    -->
+    <api>
+        <prop name="knob_label" type="string" default="GAIN"/>
+        <prop name="knob_color" type="color"  default="0xe9c98a"/>
+        <prop name="knob_value" type="int32_t" default="50" min="0" max="100"/>
+    </api>
+
+    <view extends="lv_obj" width="140" height="150" style_bg_opa="0" style_border_width="0"
+          style_pad_all="0">
+
+        <lv_arc name="ring" width="$knob_d" height="$knob_d" align="TOP_MID"
+                value="$knob_value" min="0" max="100"
+                bg_angles="135,45" angles="135,45"
+                style_arc_width="12" style_arc_color="$knob_color"
+                style_bg_arc_color="0x33333a" style_bg_arc_width="12"
+                clickable="true">
+
+            <lv_label name="value_text" text="$knob_value" align="CENTER"
+                      style_text_font="font_value_18"/>
+        </lv_arc>
+
+        <lv_label name="caption" text="$knob_label" align="BOTTOM_MID"
+                   style_text_color="$color_text_dim" style_text_font="font_mono_12"/>
+    </view>
+</component>

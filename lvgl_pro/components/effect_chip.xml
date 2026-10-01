@@ -1,0 +1,42 @@
+<component xmlns="http://lvgl.io/xml">
+    <!--
+        One slot in the effects chain rail. Tap-state machine (select -> bypass -> on)
+        and the drag-to-reorder gesture are NOT expressible in XML alone; they are wired
+        onto the exported widget in firmware/main/ui/ui_effect_chip.c, which listens for
+        LV_EVENT_CLICKED and LV_EVENT_PRESSING on the object this component exports.
+        This file only defines the look and the two visual states.
+    -->
+    <api>
+        <prop name="fx_label"   type="string"  default="GATE"/>
+        <prop name="fx_color"   type="color"   default="0x5ecdbb"/>
+        <prop name="is_on"      type="bool"    default="true"/>
+        <prop name="is_selected" type="bool"   default="false"/>
+    </api>
+
+    <view extends="lv_obj" width="$chip_w" height="$chip_h" name="root"
+          style_bg_color="$color_card" style_radius="14" style_border_width="2"
+          style_border_color="$color_border" style_pad_all="0">
+
+        <lv_label name="grip" text="&#8801;" align="TOP_LEFT" x="10" y="6"
+                   style_text_color="0x454349" style_text_font="font_body_14"/>
+
+        <lv_label name="label" text="$fx_label" align="CENTER" y="-10"
+                   style_text_font="font_body_bold_15"/>
+
+        <lv_obj name="dot" width="7" height="7" align="CENTER" x="-18" y="16"
+                style_radius="100" style_bg_opa="255"/>
+
+        <lv_label name="state_text" align="CENTER" x="4" y="16"
+                   style_text_font="font_mono_12"/>
+    </view>
+
+    <!--
+        Two named "screen states" the C code toggles between (lv_obj_add_state / remove_state
+        using custom user flags, since is_on/is_selected are runtime props, not compile-time):
+        - on:      dot + state_text tinted $fx_color / "ON"
+        - bypass:  dot #4a4850, label dimmed, state_text "BYPASS"
+        - selected adds a 2px border in $fx_color and a soft glow (handled in C via
+          lv_obj_set_style_border_color / shadow on the root part).
+        See ui_effect_chip.c: fx_chip_set_on(obj,bool), fx_chip_set_selected(obj,bool).
+    -->
+</component>

@@ -1,0 +1,42 @@
+<globals xmlns="http://lvgl.io/xml">
+
+    <!-- Palette: dark chassis + amber accent, per-effect category colors -->
+    <consts>
+        <color name="color_bg"        value="0x101013"/>
+        <color name="color_panel"     value="0x17171c"/>
+        <color name="color_rail"      value="0x131316"/>
+        <color name="color_card"      value="0x1b1b1f"/>
+        <color name="color_border"    value="0x2c2c33"/>
+        <color name="color_text"      value="0xeee8dd"/>
+        <color name="color_text_dim"  value="0x9c988e"/>
+        <color name="color_accent"    value="0xe8b463"/>
+
+        <color name="color_gate"      value="0x5ecdbb"/>
+        <color name="color_comp"      value="0xd9b26a"/>
+        <color name="color_drive"     value="0xe2795c"/>
+        <color name="color_amp"       value="0xe9c98a"/>
+        <color name="color_chorus"    value="0x7fa3e0"/>
+        <color name="color_delay"     value="0x8b6fd8"/>
+        <color name="color_reverb"    value="0xb07fe0"/>
+
+        <int name="chip_w" value="118"/>
+        <int name="chip_h" value="82"/>
+        <int name="knob_d" value="112"/>
+    </consts>
+
+    <!-- Fonts exported from the same families used in the HTML prototype -->
+    <fonts>
+        <bin name="font_body_14" file="fonts/manrope_14.bin"/>
+        <bin name="font_body_bold_15" file="fonts/manrope_bold_15.bin"/>
+        <bin name="font_mono_12" file="fonts/plex_mono_12.bin"/>
+        <bin name="font_value_18" file="fonts/plex_mono_18.bin"/>
+    </fonts>
+
+    <!-- Shared subjects (observable state) the exported C wires up to real audio params -->
+    <subjects>
+        <int name="subj_master_volume" value="63"/>
+        <int name="subj_backlight" value="80"/>
+        <int name="subj_selected_effect" value="3"/> <!-- index into effect chain, amp default -->
+    </subjects>
+
+</globals>

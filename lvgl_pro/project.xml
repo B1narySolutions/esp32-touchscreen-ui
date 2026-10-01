@@ -1,0 +1,7 @@
+<project name="amp_multifx_ui" lvgl_version="9.2.0">
+    <targets>
+        <target name="waveshare_7b">
+            <display width="1024" height="600" color_depth="16"/>
+        </target>
+    </targets>
+</project>
