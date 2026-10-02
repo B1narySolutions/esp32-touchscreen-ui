@@ -1,0 +1,67 @@
+{
+  "_comment": "Wire parameter ids for the Seed link. APPEND-ONLY: never change or reuse an id. A knob removed from the UI moves to 'retired'. Edit, then run: python tools/gen_params.py",
+  "effects": {
+    "gate": 1, "comp": 2, "eq": 3, "drive": 4, "amp": 5, "octave": 6,
+    "chorus": 7, "phaser": 8, "tremolo": 9, "delay": 10, "reverb": 11, "cab": 12
+  },
+  "params": {
+    "master.volume":    { "id": "0x0001", "meaning": "Master output volume. Sent as SET_MASTER; listed here for completeness." },
+    "master.mute":      { "id": "0x0002", "meaning": "Hard mute of the output (1 = muted). Sent as SET_MASTER." },
+
+    "gate.thresh":      { "id": "0x0100", "meaning": "Noise gate threshold: below this level the gate closes." },
+    "gate.attack":      { "id": "0x0101", "meaning": "Noise gate attack: how fast it opens." },
+    "gate.release":     { "id": "0x0102", "meaning": "Noise gate release: how fast it closes." },
+    "gate.range":       { "id": "0x0103", "meaning": "Noise gate range: how much it attenuates when closed." },
+
+    "comp.thresh":      { "id": "0x0200", "meaning": "Compressor threshold." },
+    "comp.ratio":       { "id": "0x0201", "meaning": "Compressor ratio." },
+    "comp.attack":      { "id": "0x0202", "meaning": "Compressor attack time." },
+    "comp.release":     { "id": "0x0203", "meaning": "Compressor release time." },
+    "comp.gain":        { "id": "0x0204", "meaning": "Compressor make-up gain." },
+
+    "eq.low":           { "id": "0x0300", "meaning": "EQ low band cut/boost (50 = flat)." },
+    "eq.mid":           { "id": "0x0301", "meaning": "EQ mid band cut/boost (50 = flat)." },
+    "eq.high":          { "id": "0x0302", "meaning": "EQ high band cut/boost (50 = flat)." },
+    "eq.level":         { "id": "0x0303", "meaning": "EQ output level." },
+
+    "drive.gain":       { "id": "0x0400", "meaning": "Drive pedal gain (amount of clipping)." },
+    "drive.tone":       { "id": "0x0401", "meaning": "Drive pedal tone (dark to bright)." },
+    "drive.level":      { "id": "0x0402", "meaning": "Drive pedal output level." },
+
+    "amp.gain":         { "id": "0x0500", "meaning": "Amp input gain into the NAM model (drive)." },
+    "amp.bass":         { "id": "0x0501", "meaning": "Amp tone stack bass (50 = flat)." },
+    "amp.mid":          { "id": "0x0502", "meaning": "Amp tone stack middle (50 = flat)." },
+    "amp.treble":       { "id": "0x0503", "meaning": "Amp tone stack treble (50 = flat)." },
+    "amp.level":        { "id": "0x0504", "meaning": "Amp output level after the model." },
+
+    "octave.mix":       { "id": "0x0600", "meaning": "Octave effect wet/dry mix." },
+    "octave.octUp":     { "id": "0x0601", "meaning": "Level of the octave-up voice." },
+    "octave.octDown":   { "id": "0x0602", "meaning": "Level of the octave-down voice." },
+
+    "chorus.rate":      { "id": "0x0700", "meaning": "Chorus LFO rate." },
+    "chorus.depth":     { "id": "0x0701", "meaning": "Chorus modulation depth." },
+    "chorus.mix":       { "id": "0x0702", "meaning": "Chorus wet/dry mix." },
+
+    "phaser.rate":      { "id": "0x0800", "meaning": "Phaser LFO rate." },
+    "phaser.depth":     { "id": "0x0801", "meaning": "Phaser sweep depth." },
+    "phaser.mix":       { "id": "0x0802", "meaning": "Phaser wet/dry mix." },
+
+    "tremolo.rate":     { "id": "0x0900", "meaning": "Tremolo rate." },
+    "tremolo.depth":    { "id": "0x0901", "meaning": "Tremolo depth." },
+
+    "delay.time":       { "id": "0x0A00", "meaning": "Delay time." },
+    "delay.feedback":   { "id": "0x0A01", "meaning": "Delay feedback (number of repeats)." },
+    "delay.tone":       { "id": "0x0A02", "meaning": "Delay repeat tone (dark to bright)." },
+    "delay.mix":        { "id": "0x0A03", "meaning": "Delay wet/dry mix." },
+
+    "reverb.decay":     { "id": "0x0B00", "meaning": "Reverb decay time." },
+    "reverb.predelay":  { "id": "0x0B01", "meaning": "Reverb pre-delay." },
+    "reverb.tone":      { "id": "0x0B02", "meaning": "Reverb tone (dark to bright)." },
+    "reverb.mix":       { "id": "0x0B03", "meaning": "Reverb wet/dry mix." },
+
+    "cab.lowcut":       { "id": "0x0C00", "meaning": "Cabinet low cut (high-pass) frequency." },
+    "cab.highcut":      { "id": "0x0C01", "meaning": "Cabinet high cut (low-pass) frequency." },
+    "cab.level":        { "id": "0x0C02", "meaning": "Cabinet output level." }
+  },
+  "retired": {}
+}
