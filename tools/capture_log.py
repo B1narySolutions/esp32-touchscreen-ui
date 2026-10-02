@@ -80,23 +80,26 @@ def summarise(lines, skip_zero_tap=True):
     return "\n".join(rows)
 
 
-def capture(port, baud, seconds, reset, wait=0.0, out=None):
+BOOT_GRACE_S = 1.5  # after a reset, before opening the native USB port
+
+
+def capture(port, baud, seconds, reset, wait=0.0, out=None, reset_grace=False):
     import serial  # pyserial; ships in the ESP-IDF python env
 
-    # The native USB console port disappears while the chip resets; --wait keeps retrying.
+    # The native USB console port disappears while the chip resets; --wait watches the port list
+    # for it without opening it, then leaves the chip alone for a moment: opening the native USB
+    # port within the first moments of a boot left the ESP32-S3 stuck in startup ("Enter psram
+    # timing tuning") every time, while opening it later never did (tools/reset_test.py).
+    from serial.tools import list_ports
     deadline = time.monotonic() + wait
-    while True:
-        try:
-            probe = serial.Serial()
-            probe.port = port
-            probe.dtr = probe.rts = False  # opening with them asserted could reset the board
-            probe.open()
-            probe.close()
-            break
-        except serial.SerialException:
-            if time.monotonic() >= deadline:
-                raise
-            time.sleep(0.05)
+    appeared = False
+    while not any(p.device.upper() == port.upper() for p in list_ports.comports()):
+        appeared = True
+        if time.monotonic() >= deadline:
+            raise serial.SerialException(f"{port} did not appear within {wait} s")
+        time.sleep(0.2)
+    if appeared or reset_grace:
+        time.sleep(BOOT_GRACE_S)
 
     # Set DTR/RTS before opening: on Windows, Serial(port) opens with both asserted, and the
     # board's auto-reset circuit turns that into a reset, so every capture would reboot it.

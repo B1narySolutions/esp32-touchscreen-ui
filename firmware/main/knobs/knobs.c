@@ -139,7 +139,7 @@ static void pot_poll(void) {
 #define SS_ENCODER_INTENSET 0x10
 #define SS_ENCODER_DELTA    0x40
 #define SS_BUTTON_PIN       24
-#define SS_READ_DELAY_MS    1         // seesaw needs time between the register write and the read
+#define SS_READ_DELAY_TICKS 2         // >= 1 ms between the register write and the read (seesaw needs it)
 
 typedef struct {
     uint8_t addr;
@@ -160,7 +160,7 @@ static esp_err_t ss_read(encoder_t *e, uint8_t base, uint8_t reg, uint8_t *out, 
     esp_err_t err = i2c_master_transmit(e->dev, cmd, 2, 20);
     if (err != ESP_OK) return err;
     // Release the bus while the seesaw prepares its answer, so touch reads aren't held up.
-    vTaskDelay(pdMS_TO_TICKS(SS_READ_DELAY_MS));
+    vTaskDelay(SS_READ_DELAY_TICKS);
     return i2c_master_receive(e->dev, out, len, 20);
 }
 
@@ -170,7 +170,8 @@ static void encoder_init(encoder_t *e, i2c_master_bus_handle_t bus) {
     uint8_t id = 0;
     if (ss_read(e, SS_STATUS_BASE, SS_STATUS_HW_ID, &id, 1) != ESP_OK) return;
     // Button pin as input with pull-up, with interrupts for it and for rotation.
-    const uint8_t mask[4] = { 0, (uint8_t)(1u << (SS_BUTTON_PIN - 16)), 0, 0 }; // big-endian bit 24
+    // seesaw GPIO masks are 32-bit big-endian: pin 24 is bit 0 of the first byte.
+    const uint8_t mask[4] = { (uint8_t)(1u << (SS_BUTTON_PIN - 24)), 0, 0, 0 };
     ss_write(e, SS_GPIO_BASE, SS_GPIO_DIRCLR_BULK, mask, 4);
     ss_write(e, SS_GPIO_BASE, SS_GPIO_PULLENSET, mask, 4);
     ss_write(e, SS_GPIO_BASE, SS_GPIO_BULK_SET, mask, 4);
@@ -208,7 +209,7 @@ static void encoder_poll(encoder_t *e, int which) {
         }
     }
     if (ss_read(e, SS_GPIO_BASE, SS_GPIO_BULK, b, 4) == ESP_OK) {
-        const bool pressed = !(b[1] & (1u << (SS_BUTTON_PIN - 16)));
+        const bool pressed = !(b[0] & (1u << (SS_BUTTON_PIN - 24))); // pulled up: pressed reads 0
         if (pressed && !e->pressed) {
             if (which == 0) {
                 rig_set_muted(!rig()->muted, RIG_SRC_KNOB);

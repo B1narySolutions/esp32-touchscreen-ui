@@ -61,10 +61,14 @@ drop-in receiver code, `slp_receiver.c`).
 - The SD scan trusts `/nam/.cache/index.tsv` for files whose name, size and modification time
   are unchanged (boot scan of 6 files: 250 ms, was 3.8 s). A file replaced by different content
   with the same size and timestamp would be missed until it is renamed or touched.
-- Observed once: after an esptool reset over the **native USB** port, the 2nd-stage bootloader
-  stopped at "Enter psram timing tuning" and the chip stopped answering; a hardware reset (RESET
-  button, power cycle, or esptool on the USB TO UART port, which drives EN) recovered it at once.
-  Resets over native USB worked many other times. Suspect: the 120 MHz flash/PSRAM settings
-  (experimental in ESP-IDF) on a warm reset. Unproven; if it recurs, try 80 MHz PSRAM.
+- **Startup hang if the native USB port is opened right after a reset** (measured with
+  `tools/reset_test.py`). With flash and PSRAM at 120 MHz (the current, display-tested setting),
+  a PC opening the "USB" port within about a second of a reset stops startup at "Enter psram
+  timing tuning": 33 of 33 times, whatever the reset method. Opening it 1.5 s later: 0 of 40.
+  With flash and PSRAM at 80 MHz: 0 of 10 even when opened immediately, so the 120 MHz timing
+  tuning (experimental in ESP-IDF) is the sensitive part. The repo's tools now wait 1.5 s after
+  the port reappears. Watch for it with `idf.py flash monitor` and Web Serial reconnects; RESET
+  recovers it. Possible fix: 80 MHz PSRAM, but that costs PSRAM bandwidth, which the display
+  depends on, so it needs a display soak with someone watching before adopting it.
 - A rescan while an upload is running can fail that upload once (it retries after 5 s).
 - Chip taps rebuild the whole effect panel (90-390 ms tap-to-frame, same as before this work).

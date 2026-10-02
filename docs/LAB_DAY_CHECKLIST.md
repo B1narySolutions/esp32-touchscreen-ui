@@ -48,7 +48,8 @@ Expect, in order:
 - One `DIAG {...}` line per second.
 
 If the screen stays dark and the console prints nothing after a reset, press the board's RESET
-button (seen once after a reset over the native USB port; see SEED_LINK_STATUS.md).
+button. (Known cause: a PC opening the "USB" port within about a second of a reset, e.g.
+`idf.py flash monitor` or a Web Serial reconnect. `capture_log.py` waits 1.5 s to avoid it.)
 
 ## 4. The Seed's own USB console
 

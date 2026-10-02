@@ -125,8 +125,9 @@ Its Web Serial Test Mode still parses the `DIAG` line; the new fields are additi
 3. Make chip taps cheaper (restyle instead of rebuilding the panel when the layout is the same).
 4. Optional: preset export to SD, bringing the preview up to date (see "Preview drift" below).
 
-If the screen stays dark after a reset done over the native USB port (seen once: the bootloader
-stopped at PSRAM timing tuning), press RESET or power-cycle; see SEED_LINK_STATUS.md.
+Don't open the native USB port within ~1.5 s of a reset: at 120 MHz flash/PSRAM that stops
+startup at "Enter psram timing tuning" (RESET recovers it; `capture_log.py` waits for you).
+80 MHz cures it but needs a display soak first. Details in SEED_LINK_STATUS.md.
 
 ## Working conventions
 
