@@ -99,6 +99,17 @@ tools/                  capture_log, mock_seed, link_check, gen_params, golden_p
 tests/host/             host unit tests (MSVC + ASan), seed_sim, nam_check, slp_examples
 ```
 
+## Preview drift
+
+`preview/index.html` mirrors `ui_effects_data.c` (effects, knobs, models, presets, including the
+Seed's three built-in amps). It does **not** show things that only exist with real hardware:
+- the "SD Library" card and popup, and SD profiles in the AMP row;
+- the status line under the AMP cards ("Running on the Seed", upload progress, SD card state);
+- the MOCK tags on the meters and in Test Mode, and Test Mode's new link rows (bus, UART
+  overruns, DSP peak and overruns);
+- the lifted colour palette from `ui_theme.h` (older drift, unchanged).
+Its Web Serial Test Mode still parses the `DIAG` line; the new fields are additions it ignores.
+
 ## Hard rules (from the sponsor)
 
 - Parameters are **never** edited by dragging a rotary knob. Tapping a knob opens the vertical
@@ -112,8 +123,10 @@ tests/host/             host unit tests (MSVC + ASan), seed_sim, nam_check, slp_
 1. Lab day with the Seed: LAB_DAY_CHECKLIST.md (the Seed owner integrates the receiver first).
 2. Encoders: wire them, enable `CONFIG_KNOBS_ENCODERS`, check direction, measure tap latency.
 3. Make chip taps cheaper (restyle instead of rebuilding the panel when the layout is the same).
-4. Optional: SD scan speed (a cached file is still read and hashed: ~0.8 s each), preset export
-   to SD, bringing the preview's palette up to `ui_theme.h`.
+4. Optional: preset export to SD, bringing the preview up to date (see "Preview drift" below).
+
+If the screen stays dark after a reset done over the native USB port (seen once: the bootloader
+stopped at PSRAM timing tuning), press RESET or power-cycle; see SEED_LINK_STATUS.md.
 
 ## Working conventions
 

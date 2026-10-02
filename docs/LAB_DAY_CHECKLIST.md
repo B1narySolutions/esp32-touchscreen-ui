@@ -47,6 +47,9 @@ Expect, in order:
 - `sd: mounted /sdcard` and `nam_store: N profile(s) ready`
 - One `DIAG {...}` line per second.
 
+If the screen stays dark and the console prints nothing after a reset, press the board's RESET
+button (seen once after a reset over the native USB port; see SEED_LINK_STATUS.md).
+
 ## 4. The Seed's own USB console
 
 The Seed still prints its 1 Hz status line on its USB serial (`make monitor`). Note its DSP load

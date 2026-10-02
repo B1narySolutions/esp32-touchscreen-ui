@@ -24,6 +24,20 @@ static const char *TAG = "nam_store";
 #define CACHE_DIR      NAM_DIR "/.cache"
 #define MAX_FILE_BYTES (2 * 1024 * 1024)   // TONE3000 A2 files are ~300 KB
 #define CACHE_MAGIC    0x314C3241u          // "A2L1"
+#define INDEX_PATH     CACHE_DIR "/index.tsv"
+#define INDEX_MAX      64
+
+// The scan index: what each .nam file was the last time it was seen, keyed by name, size and
+// modification time. An unchanged file then needs no read or hash at all: a good one goes
+// straight to its cache file, a rejected one straight to its reason. Lines are
+// "name<TAB>size<TAB>mtime<TAB>sha256 hex<TAB>reason (empty if accepted)".
+typedef struct {
+    char name[96];
+    long size;
+    long long mtime;
+    char sha[65];
+    char reason[96];
+} index_entry_t;
 
 // Cache file: this header, then the packed weights (little-endian float32).
 typedef struct {
@@ -133,6 +147,49 @@ static char *read_file(const char *path, size_t *len, uint8_t sha[32], const cha
     return buf;
 }
 
+static int index_load(index_entry_t *idx) {
+    FILE *f = fopen(INDEX_PATH, "r");
+    if (!f) return 0;
+    int n = 0;
+    char line[320];
+    while (n < INDEX_MAX && fgets(line, sizeof(line), f)) {
+        index_entry_t *e = &idx[n];
+        char *fields[5] = { 0 };
+        char *save = NULL, *tok = strtok_r(line, "\t\r\n", &save);
+        int k = 0;
+        // strtok_r skips empty fields, so the reason (last, possibly empty) is handled by count.
+        while (tok && k < 5) {
+            fields[k++] = tok;
+            tok = strtok_r(NULL, "\t\r\n", &save);
+        }
+        if (k < 4 || strlen(fields[3]) != 64) continue;
+        strlcpy(e->name, fields[0], sizeof(e->name));
+        e->size = strtol(fields[1], NULL, 10);
+        e->mtime = strtoll(fields[2], NULL, 10);
+        strlcpy(e->sha, fields[3], sizeof(e->sha));
+        strlcpy(e->reason, k == 5 ? fields[4] : "", sizeof(e->reason));
+        n++;
+    }
+    fclose(f);
+    return n;
+}
+
+static void index_save(const index_entry_t *idx, int n) {
+    FILE *f = fopen(INDEX_PATH, "w");
+    if (!f) return;
+    for (int i = 0; i < n; i++) {
+        fprintf(f, "%s\t%ld\t%lld\t%s\t%s\n", idx[i].name, idx[i].size, idx[i].mtime, idx[i].sha, idx[i].reason);
+    }
+    fclose(f);
+}
+
+static const index_entry_t *index_find(const index_entry_t *idx, int n, const char *name, long size, long long mtime) {
+    for (int i = 0; i < n; i++) {
+        if (idx[i].size == size && idx[i].mtime == mtime && strcmp(idx[i].name, name) == 0) return &idx[i];
+    }
+    return NULL;
+}
+
 static void scan(void) {
     const int64_t t0 = esp_timer_get_time();
     set_status(true, false, 0, 0, "reading the SD card...");
@@ -152,8 +209,13 @@ static void scan(void) {
     int n_list = 0, accepted = 0, rejected = 0, from_cache = 0;
     amp_model_t *list = heap_caps_calloc(AMP_MODELS_MAX_SD, sizeof(amp_model_t), MALLOC_CAP_SPIRAM);
     nam_a2_t *conv = heap_caps_malloc(sizeof(*conv), MALLOC_CAP_SPIRAM);
+    // Last scan's index, and the one this scan writes (only files that still exist).
+    index_entry_t *old_idx = heap_caps_calloc(INDEX_MAX, sizeof(index_entry_t), MALLOC_CAP_SPIRAM);
+    index_entry_t *new_idx = heap_caps_calloc(INDEX_MAX, sizeof(index_entry_t), MALLOC_CAP_SPIRAM);
+    const int n_old = old_idx ? index_load(old_idx) : 0;
+    int n_new = 0, from_index = 0;
     struct dirent *e;
-    while (list && conv && (e = readdir(dir)) != NULL && n_list < AMP_MODELS_MAX_SD) {
+    while (list && conv && old_idx && new_idx && (e = readdir(dir)) != NULL && n_list < AMP_MODELS_MAX_SD) {
         const char *dot = strrchr(e->d_name, '.');
         if (e->d_name[0] == '.' || !dot || strcasecmp(dot, ".nam") != 0) continue;
         char path[300], cache[300];
@@ -167,12 +229,33 @@ static void scan(void) {
         char reason[96];
         size_t len = 0;
         uint8_t sha[32];
-        char *json = read_file(path, &len, sha, &why);
+        char hex[65] = "";
+        struct stat st;
+        const bool have_stat = stat(path, &st) == 0;
+        const index_entry_t *known = have_stat ? index_find(old_idx, n_old, e->d_name, (long)st.st_size, (long long)st.st_mtime) : NULL;
+        uint32_t crc;
+        bool done = false;
+        if (known && known->reason[0]) {
+            // Unchanged since it was rejected: same reason, no read.
+            strlcpy(reason, known->reason, sizeof(reason));
+            strlcpy(hex, known->sha, sizeof(hex));
+            why = reason;
+            done = true;
+            from_index++;
+        } else if (known) {
+            snprintf(cache, sizeof(cache), "%s/%s.a2l", CACHE_DIR, known->sha);
+            if (read_cache(cache, p, &crc)) {
+                p->hash = crc;
+                strlcpy(hex, known->sha, sizeof(hex));
+                done = true;
+                from_cache++;
+                from_index++;
+            }
+        }
+        char *json = done ? NULL : read_file(path, &len, sha, &why);
         if (json) {
-            char hex[65];
             for (int i = 0; i < 32; i++) sprintf(hex + 2 * i, "%02x", sha[i]);
             snprintf(cache, sizeof(cache), "%s/%s.a2l", CACHE_DIR, hex);
-            uint32_t crc;
             if (read_cache(cache, p, &crc)) {
                 p->hash = crc;
                 from_cache++;
@@ -187,6 +270,16 @@ static void scan(void) {
                 }
             }
             heap_caps_free(json);
+        }
+
+        // Remember this file for the next scan (only when we know its hash).
+        if (have_stat && hex[0] && n_new < INDEX_MAX) {
+            index_entry_t *ie = &new_idx[n_new++];
+            strlcpy(ie->name, e->d_name, sizeof(ie->name));
+            ie->size = (long)st.st_size;
+            ie->mtime = (long long)st.st_mtime;
+            strlcpy(ie->sha, hex, sizeof(ie->sha));
+            strlcpy(ie->reason, why ? why : "", sizeof(ie->reason));
         }
 
         if (why) {
@@ -211,11 +304,15 @@ static void scan(void) {
     }
     closedir(dir);
     heap_caps_free(conv);
+    if (new_idx) index_save(new_idx, n_new);
+    heap_caps_free(old_idx);
+    heap_caps_free(new_idx);
 
     if (list) amp_models_set_sd(list, n_list);
     heap_caps_free(list);
     const int ms = (int)((esp_timer_get_time() - t0) / 1000);
-    ESP_LOGI(TAG, "%d profile(s) ready (%d from cache), %d rejected, in %d ms", accepted, from_cache, rejected, ms);
+    ESP_LOGI(TAG, "%d profile(s) ready (%d from cache), %d rejected, %d unchanged files skipped reading, in %d ms",
+             accepted, from_cache, rejected, from_index, ms);
     if (accepted || rejected) {
         set_status(false, true, accepted, rejected, "%d amp profile%s from the SD card%s", accepted,
                    accepted == 1 ? "" : "s", rejected ? ", some files rejected" : "");

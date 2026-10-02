@@ -18,7 +18,7 @@ drop-in receiver code, `slp_receiver.c`).
 | Physical pot on GPIO6 | Master volume follows over the full range; median filter rejects contact dropouts; idle pot causes no changes. |
 | I2C scan at boot | 0x24 IO expander, 0x5D GT911 (no encoders fitted yet). |
 | microSD | FAT32/MBR card mounts; no card and wrong format are reported, never formatted. |
-| `.nam` conversion on the ESP32 | CRC32 of the three amps.json models on the device equals the Python reference: Fender 0066a5ae, Vox 3949448f, Marshall f737e066. Bad files rejected with clear reasons (wrong sample rate, A1 model, not JSON). Cache: second boot reads all three from `.cache/`. |
+| `.nam` conversion on the ESP32 | CRC32 of the three amps.json models on the device equals the Python reference: Fender 0066a5ae, Vox 3949448f, Marshall f737e066. Bad files rejected with clear reasons (wrong sample rate, A1 model, not JSON). Cache plus scan index: a boot with an unchanged card scans 6 files in 250 ms. |
 | SD Library UI | Lists accepted and rejected files at full width; selecting uploads and shows progress then "Running on the Seed". |
 
 ## Verified against the simulated Seed only (mock_seed.py / seed_sim)
@@ -58,7 +58,13 @@ drop-in receiver code, `slp_receiver.c`).
 
 ## Known limitations
 
-- A cached SD profile is still read and hashed to find its cache entry (~0.8 s per 300 KB
-  file, in the background). An index by name/size/date would make boots faster.
+- The SD scan trusts `/nam/.cache/index.tsv` for files whose name, size and modification time
+  are unchanged (boot scan of 6 files: 250 ms, was 3.8 s). A file replaced by different content
+  with the same size and timestamp would be missed until it is renamed or touched.
+- Observed once: after an esptool reset over the **native USB** port, the 2nd-stage bootloader
+  stopped at "Enter psram timing tuning" and the chip stopped answering; a hardware reset (RESET
+  button, power cycle, or esptool on the USB TO UART port, which drives EN) recovered it at once.
+  Resets over native USB worked many other times. Suspect: the 120 MHz flash/PSRAM settings
+  (experimental in ESP-IDF) on a warm reset. Unproven; if it recurs, try 80 MHz PSRAM.
 - A rescan while an upload is running can fail that upload once (it retries after 5 s).
 - Chip taps rebuild the whole effect panel (90-390 ms tap-to-frame, same as before this work).
