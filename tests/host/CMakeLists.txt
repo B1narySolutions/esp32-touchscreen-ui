@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.16)
 project(seed_link_host_tests C)
 
 set(PROTO_DIR "${CMAKE_CURRENT_LIST_DIR}/../../firmware/main/seed_link_proto")
-set(PROTO_SRC "${PROTO_DIR}/seed_link_proto.c" "${PROTO_DIR}/slp_coalesce.c")
+set(PROTO_SRC "${PROTO_DIR}/seed_link_proto.c" "${PROTO_DIR}/slp_coalesce.c" "${PROTO_DIR}/slp_receiver.c")
 set(NAM_DIR "${CMAKE_CURRENT_LIST_DIR}/../../firmware/main/nam")
 get_filename_component(REPO_ROOT "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
 
@@ -22,7 +22,7 @@ target_include_directories(slp PUBLIC "${PROTO_DIR}" "${NAM_DIR}")
 target_compile_options(slp PRIVATE ${WARN} ${SAN})
 set_property(TARGET slp PROPERTY C_STANDARD 99)
 
-add_executable(host_tests main.c test_proto.c test_fuzz.c test_coalesce.c test_nam.c)
+add_executable(host_tests main.c test_proto.c test_fuzz.c test_coalesce.c test_nam.c test_receiver.c)
 target_compile_definitions(host_tests PRIVATE REPO_ROOT="${REPO_ROOT}")
 target_link_libraries(host_tests PRIVATE slp)
 target_compile_options(host_tests PRIVATE ${WARN} ${SAN})
@@ -33,6 +33,12 @@ add_executable(nam_check nam_check.c)
 target_link_libraries(nam_check PRIVATE slp)
 target_compile_options(nam_check PRIVATE ${WARN} ${SAN})
 set_property(TARGET nam_check PROPERTY C_STANDARD 11)
+
+# Runs the Seed-side receiver on a PC serial port against the real ESP32 (Windows).
+add_executable(seed_sim seed_sim.c)
+target_link_libraries(seed_sim PRIVATE slp)
+target_compile_options(seed_sim PRIVATE ${WARN})
+set_property(TARGET seed_sim PROPERTY C_STANDARD 11)
 
 # Prints the hex examples used in docs/SEED_LINK_PROTOCOL.md.
 add_executable(slp_examples examples.c)

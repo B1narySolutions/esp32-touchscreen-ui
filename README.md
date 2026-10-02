@@ -41,7 +41,7 @@ firmware/          ESP-IDF component — the actual working implementation
     board_init.c/.h    display + touch bring-up (⚠ see VERIFY notes inside)
     ui/
       ui_main.c/.h            builds the screen, owns app-level state
-      ui_effects_data.c/.h    the 7 effects, their knobs, colors, model options
+      ui_effects_data.c/.h    the 12 effects, their knobs, colors, model options
       ui_effect_chip.c/.h     chip widget: tap-to-cycle + drag-to-reorder
       ui_knob.c/.h            the read-only arc "knob" that opens the slider
       ui_vertical_slider.c/.h the shared slider popup
@@ -79,28 +79,47 @@ such dependency and is what I'd trust first.
 ## Building
 
 From an **ESP-IDF 5.5 PowerShell** (Start menu), or a normal PowerShell after
-running `C:\Espressif\frameworks\esp-idf-v5.5.5\export.ps1`:
+running `C:\Espressiframeworks\esp-idf-v5.5.5\export.ps1`:
 
 ```
-cd C:\Users\QwexM\Desktop\projects\amp-multifx-ui\firmware
+cd firmware
 idf.py build
-idf.py -p COM5 flash monitor
+idf.py -p COMx flash
 ```
 
-Use the board's **USB TO UART** Type-C port, and replace `COM5` with whatever
-Device Manager shows under "Ports (COM & LPT)". Exit the monitor with Ctrl+].
+Use the board's **"USB"** Type-C port (native USB; Device Manager shows "USB Serial Device").
+The console and the `DIAG` line are there too. The "USB TO UART" port carries the link to the
+Daisy Seed (or to the simulated Seed on a PC), depending on the UART switch SW1: see
+`docs/HANDOFF.md`. Read the console without the interactive monitor:
+
+```
+python tools/capture_log.py --port COMx --seconds 30 --out logs/run.txt
+```
 
 Board config (`board_init.c`, `io_expander.c`, `sdkconfig.defaults`) matches
 Waveshare's official ESP-IDF example for the ESP32-S3-Touch-LCD-7B
 (github.com/waveshareteam/ESP32-S3-Touch-LCD-7B, `17_lvgl_v9_demo`): pins, RGB
 timings, GT911 reset sequence, IO expander at 0x24 (backlight PWM + battery ADC).
 
+Host tests (protocol, `.nam` converter, Seed-side receiver; needs Visual Studio Build Tools):
+`powershell -File toolsun_host_tests.ps1`.
+
+## The Daisy Seed link
+
+The touchscreen drives the Daisy Seed3 (Neural Amp Modeler) over UART: every audio action goes
+through `rig_state` and out as compact binary frames; the Seed reports DSP load, the active model
+and IN/OUT peak meters back. TONE3000 A2 amp profiles on the microSD card (`/nam/*.nam`) are
+converted on the ESP32 and uploaded to the Seed. Start with `docs/SEED_LINK_STATUS.md`; the
+protocol is `docs/SEED_LINK_PROTOCOL.md` and the Seed owner's guide is
+`docs/SEED_INTEGRATION_GUIDE.md`.
+
 ## Test Mode
 
 Menu → Test Mode on the device shows live readings (firmware build ID, per-core CPU load,
 heap, PSRAM, chip temperature, battery voltage and its 10 s range, backlight, panel refresh
 rate, UI frame time and tap-to-frame latency, a touch test with an alignment ring, colour
-bars) and the SEED3 link status. The firmware also prints one `DIAG {json}` line per second on the serial
-port; the preview's Test Mode reads those over Web Serial (Chrome/Edge) and shows the
-same live values. Nothing in either is simulated. SEED3 fields read "Not connected"
-until `seed_link.c` gets a real transport.
+bars) and the SEED3 link: connection, packet counts, link errors, round-trip time (Ping SEED),
+the Seed's firmware, sample rate, DSP load, model and meters. The firmware also prints one
+`DIAG {json}` line per second on the native USB port; the preview's Test Mode reads those over
+Web Serial (Chrome/Edge). Nothing is simulated: with no Seed the panel says "Not connected", and
+values from the simulated Seed (`tools/mock_seed.py`) are labelled MOCK.

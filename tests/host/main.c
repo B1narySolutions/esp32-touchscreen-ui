@@ -13,6 +13,7 @@ int main(void) {
         { "fuzz (decoder + unpackers)", test_fuzz },
         { "coalesce", test_coalesce },
         { "nam (A2 loader, golden)", test_nam },
+        { "receiver (Seed side)", test_receiver },
     };
     for (size_t i = 0; i < sizeof(tests) / sizeof(tests[0]); i++) {
         const int before = g_failures;

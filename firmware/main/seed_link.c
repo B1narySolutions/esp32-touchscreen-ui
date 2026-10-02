@@ -354,6 +354,7 @@ static void upload_start_if_needed(int64_t now) {
     L->up.data = (const uint8_t *)w;
     L->up.size = NAM_A2_WEIGHT_COUNT * 4;
     L->up.next_off = L->up.acked_bytes = 0;
+    L->up.tries = 0; // MODEL_BEGIN attempts; the retry path in upload_tick() carries its count over
     L->up.transfer_id++;
     memset(L->up.win, 0, sizeof(L->up.win));
     slp_model_begin_t b = { L->up.transfer_id, NAM_A2_WEIGHT_COUNT, L->up.size, hash, "" };
