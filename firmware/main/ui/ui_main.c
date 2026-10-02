@@ -544,6 +544,10 @@ static void update_cab_curve(void) {
 // Model cards. The AMP's list is the Seed's built-in amps plus SD amp profiles (amp_models.h);
 // every other effect's list is fixed in ui_effects_data.c.
 static uint32_t s_amp_cards_version;   // amp_models_version() the AMP cards were built from
+#define LIBRARY_CARD 0xFFFF                 // model card index of the "SD Library" card
+static lv_obj_t *s_lib_backdrop;           // SD Library popup, built in build_sd_library()
+static uint32_t s_lib_version;
+static void lib_fill(void);
 
 static int card_count(uint8_t fx) {
     return fx == FX_AMP ? amp_models_count() : g_effects[fx].model_count;
@@ -562,14 +566,21 @@ static void restyle_model_cards(uint8_t fx) {
     const uint32_t n = lv_obj_get_child_cnt(s_model_row);
     for (uint32_t i = 0; i < n; i++) {
         lv_obj_t *card = lv_obj_get_child(s_model_row, i);
-        lv_obj_set_style_border_color(card, (int)i == sel ? color : UI_COLOR_TRACK, 0);
-        lv_obj_set_style_text_color(lv_obj_get_child(card, 0), (int)i == sel ? color : UI_COLOR_TEXT, 0);
+        const int index = (int)(uintptr_t)lv_obj_get_user_data(card);
+        lv_obj_set_style_border_color(card, index == sel ? color : UI_COLOR_TRACK, 0);
+        lv_obj_set_style_text_color(lv_obj_get_child(card, 0), index == sel ? color : UI_COLOR_TEXT, 0);
     }
 }
+
+static void lib_open(void);
 
 static void model_card_cb(lv_event_t *e) {
     const int m = (int)(uintptr_t)lv_event_get_user_data(e);
     const uint8_t fx = s_selected_fx;
+    if (m == LIBRARY_CARD) {
+        lib_open();
+        return;
+    }
     const ui_effect_def_t *def = &g_effects[fx];
     if (fx == FX_AMP) {
         amp_model_t am;
@@ -613,6 +624,7 @@ static void add_model_card(int index, const char *title, const char *desc, bool 
     lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(card, model_card_cb, LV_EVENT_CLICKED, (void *)(uintptr_t)index);
+    lv_obj_set_user_data(card, (void *)(uintptr_t)index);
 
     lv_obj_t *name = make_label(card, title, &lv_font_montserrat_14, sel ? color : disabled ? UI_COLOR_TEXT_MUTED : UI_COLOR_TEXT);
     lv_obj_set_width(name, LV_PCT(100));
@@ -632,16 +644,25 @@ static void build_model_cards(const ui_effect_def_t *def) {
     lv_obj_clear_flag(s_model_row, LV_OBJ_FLAG_HIDDEN);
     const int sel = selected_card(fx);
     const int n = card_count(fx);
-    for (int m = 0; m < n; m++) {
-        if (fx == FX_AMP) {
-            amp_model_t am;
-            if (!amp_models_get(m, &am)) break;
-            add_model_card(m, am.name, am.desc, m == sel, def->color, am.rejected);
-        } else {
-            add_model_card(m, def->models[m].name, def->models[m].desc, m == sel, def->color, false);
-        }
+    if (fx != FX_AMP) {
+        for (int m = 0; m < n; m++) add_model_card(m, def->models[m].name, def->models[m].desc, m == sel, def->color, false);
+        return;
     }
-    if (fx == FX_AMP) s_amp_cards_version = amp_models_version();
+    // AMP: the Seed's built-in amps, the selected SD profile (if any), then the SD Library card,
+    // which lists everything on the card at full width.
+    const int builtins = amp_models_builtin_count();
+    amp_model_t am;
+    for (int m = 0; m < builtins && amp_models_get(m, &am); m++) add_model_card(m, am.name, am.desc, m == sel, def->color, false);
+    if (sel >= builtins && amp_models_get(sel, &am)) add_model_card(sel, am.name, "From the SD card", true, def->color, false);
+    nam_store_status_t st;
+    nam_store_status(&st);
+    char desc[72];
+    if (st.scanning) snprintf(desc, sizeof(desc), "Reading the SD card...");
+    else if (!st.card_ok) snprintf(desc, sizeof(desc), "No usable SD card. Tap for details.");
+    else snprintf(desc, sizeof(desc), "%d profile%s%s. Tap to browse.", st.accepted, st.accepted == 1 ? "" : "s",
+                  st.rejected ? ", some can't be used" : "");
+    add_model_card(LIBRARY_CARD, "SD Library  " LV_SYMBOL_RIGHT, desc, false, def->color, false);
+    s_amp_cards_version = amp_models_version();
 }
 
 // One line under the AMP cards saying what the Seed is actually running. Only real link data:
@@ -741,6 +762,7 @@ static void meter_timer_cb(lv_timer_t *t) {
     amp_models_sync_from_seed();
     if (s_selected_fx == FX_AMP) {
         if (amp_models_version() != s_amp_cards_version) build_model_cards(&g_effects[FX_AMP]);
+        if (!lv_obj_has_flag(s_lib_backdrop, LV_OBJ_FLAG_HIDDEN) && amp_models_version() != s_lib_version) lib_fill();
         refresh_amp_status();
     }
     seed_link_stats_t s;
@@ -1162,6 +1184,121 @@ static void catalog_toggle_cb(lv_event_t *e) {
     ui_main_mark_dirty();
 }
 
+
+// ---------------------------------------------------------------------------------------------
+// SD Library: every amp profile on the card, full width, with its status. The AMP card row only
+// holds the built-in amps, the active SD profile and the card that opens this.
+
+
+static lv_obj_t *s_lib_backdrop, *s_lib_list, *s_lib_note;
+static uint32_t s_lib_version;
+
+static void lib_close_cb(lv_event_t *e) {
+    (void)e;
+    lv_obj_add_flag(s_lib_backdrop, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void lib_row_cb(lv_event_t *e) {
+    const int index = (int)(uintptr_t)lv_event_get_user_data(e);
+    amp_model_t am;
+    if (!amp_models_get(index, &am) || am.rejected) return; // its row says why
+    rig_set_amp_sd(am.sd_hash, RIG_SRC_UI); // the link uploads it if the Seed lacks it
+    ui_main_mark_dirty();
+    lv_obj_add_flag(s_lib_backdrop, LV_OBJ_FLAG_HIDDEN);
+    // Rebuilding the AMP cards here is safe: the clicked row belongs to the popup, not the row.
+    build_model_cards(&g_effects[FX_AMP]);
+    refresh_amp_status();
+}
+
+static void lib_rescan_cb(lv_event_t *e) {
+    (void)e;
+    nam_store_rescan(); // the list refreshes when the scan publishes (meter_timer_cb)
+    lv_label_set_text(s_lib_note, "Reading the SD card...");
+}
+
+static void lib_fill(void) {
+    lv_obj_clean(s_lib_list);
+    seed_link_stats_t s;
+    seed_link_get_stats(&s);
+    const uint32_t selected = rig()->amp_sd_hash;
+    const int first = amp_models_builtin_count(), n = amp_models_count();
+    for (int i = first; i < n; i++) {
+        amp_model_t am;
+        if (!amp_models_get(i, &am)) break;
+        const bool sel = !am.rejected && am.sd_hash == selected;
+        lv_obj_t *row = lv_obj_create(s_lib_list);
+        lv_obj_remove_style_all(row);
+        lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
+        lv_obj_set_style_pad_hor(row, 14, 0);
+        lv_obj_set_style_pad_ver(row, 10, 0);
+        lv_obj_set_style_pad_row(row, 3, 0);
+        lv_obj_set_style_radius(row, 10, 0);
+        lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_color(row, UI_COLOR_RAISED, 0);
+        lv_obj_set_style_border_width(row, 2, 0);
+        lv_obj_set_style_border_color(row, sel ? g_effects[FX_AMP].color : UI_COLOR_RAISED, 0);
+        lv_obj_set_flex_flow(row, LV_FLEX_FLOW_COLUMN);
+        lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+        if (!am.rejected) {
+            lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_set_style_bg_color(row, UI_COLOR_PRESSED, LV_STATE_PRESSED);
+            lv_obj_add_event_cb(row, lib_row_cb, LV_EVENT_CLICKED, (void *)(uintptr_t)i);
+        }
+        lv_obj_add_flag(row, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
+
+        lv_obj_t *name = make_label(row, am.name, &lv_font_montserrat_14,
+                                    am.rejected ? UI_COLOR_TEXT_MUTED : sel ? g_effects[FX_AMP].color : UI_COLOR_TEXT);
+        lv_obj_set_width(name, LV_PCT(100));
+        lv_label_set_long_mode(name, LV_LABEL_LONG_WRAP);
+        char sub[160];
+        if (am.rejected) {
+            snprintf(sub, sizeof(sub), "%s  -  %s", am.file, am.desc);
+        } else {
+            const bool running = sel && s.connected && s.active_kind == SLP_MODEL_UPLOADED && s.active_hash == am.sd_hash;
+            snprintf(sub, sizeof(sub), "%s  -  %s", am.file,
+                     running ? (s.peer_mock ? "On the Seed (MOCK)" : "On the Seed") : sel ? "Selected" : "Ready, tap to use");
+        }
+        lv_obj_t *d = make_label(row, sub, &lv_font_montserrat_12, am.rejected ? UI_COLOR_WARN : UI_COLOR_TEXT_MUTED);
+        lv_obj_set_width(d, LV_PCT(100));
+        lv_label_set_long_mode(d, LV_LABEL_LONG_WRAP);
+    }
+    nam_store_status_t st;
+    nam_store_status(&st);
+    lv_label_set_text(s_lib_note, n > first ? st.status
+                                            : st.card_ok ? "No .nam files in the /nam folder. Copy TONE3000 A2 downloads there on a PC."
+                                                         : st.status);
+    s_lib_version = amp_models_version();
+}
+
+static void lib_open(void) {
+    lib_fill();
+    lv_obj_clear_flag(s_lib_backdrop, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void build_sd_library(lv_obj_t *screen) {
+    s_lib_backdrop = make_backdrop(screen, lib_close_cb);
+    lv_obj_t *card = make_card(s_lib_backdrop, 680, 520);
+    lv_obj_set_style_pad_row(card, 12, 0);
+    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+    make_close_btn(card, lib_close_cb);
+    make_label(card, "SD Library - amp profiles", &lv_font_montserrat_16, UI_COLOR_TEXT);
+
+    s_lib_list = lv_obj_create(card);
+    lv_obj_remove_style_all(s_lib_list);
+    lv_obj_set_width(s_lib_list, LV_PCT(100));
+    lv_obj_set_flex_grow(s_lib_list, 1);
+    lv_obj_set_flex_flow(s_lib_list, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(s_lib_list, 8, 0);
+    lv_obj_set_scroll_dir(s_lib_list, LV_DIR_VER);
+
+    lv_obj_t *foot = make_row(card, 14);
+    lv_obj_set_width(foot, LV_PCT(100));
+    s_lib_note = make_label(foot, "", &lv_font_montserrat_12, UI_COLOR_TEXT_MUTED);
+    lv_obj_set_flex_grow(s_lib_note, 1);
+    lv_label_set_long_mode(s_lib_note, LV_LABEL_LONG_WRAP);
+    make_ghost_btn(foot, "Rescan SD card", 170, lib_rescan_cb);
+}
+
 static void build_catalog(lv_obj_t *screen) {
     s_catalog_backdrop = make_backdrop(screen, catalog_close_cb);
     lv_obj_t *card = make_card(s_catalog_backdrop, 530, 452);
@@ -1311,6 +1448,7 @@ void ui_main_init(void) {
     build_settings_overlay(screen);
     build_presets_drawer(screen);
     build_catalog(screen);
+    build_sd_library(screen);
     ui_test_mode_init(screen);
 
     lv_screen_load(screen);

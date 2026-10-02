@@ -15,6 +15,7 @@ typedef struct {
     uint8_t builtin_id;     // the Seed's AmpId, for built-ins
     uint32_t sd_hash;       // CRC32 of the packed weights, for SD profiles
     bool rejected;          // an SD file that can't run on the Seed; desc says why (not selectable)
+    char file[48];          // SD profiles: the file name on the card
 } amp_model_t;
 
 // Allocates the lists and fills in the compiled-in built-ins. Call once, before anything else.

@@ -161,6 +161,7 @@ static void scan(void) {
 
         amp_model_t *m = &list[n_list];
         memset(m, 0, sizeof(*m));
+        strlcpy(m->file, e->d_name, sizeof(m->file));
         profile_t *p = &s_profiles[accepted];
         const char *why = NULL;
         char reason[96];
