@@ -60,3 +60,17 @@ CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
 # Seed link UART: keep its interrupt handler in IRAM so receiving survives the PSRAM bus
 # contention from the RGB refills (the same reason the LCD ISR is IRAM-safe above).
 CONFIG_UART_ISR_IN_IRAM=y
+
+# microSD (FAT32): long file names for .nam files and the .cache/<sha256>.a2l names, with
+# FatFs buffers in PSRAM so the card costs no scarce internal RAM.
+CONFIG_FATFS_LFN_HEAP=y
+CONFIG_FATFS_MAX_LFN=255
+CONFIG_FATFS_ALLOC_PREFER_EXTRAM=y
+
+# Custom partition table: 4 MB app (partitions.csv); NVS keeps its default place and size.
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# The SD card's SPI bus doesn't need its interrupt handler in IRAM (it can wait out a flash
+# write); keeping it in flash saves ~4.7 KB of the scarce internal RAM.
+CONFIG_SPI_MASTER_ISR_IN_IRAM=n

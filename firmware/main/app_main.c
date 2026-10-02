@@ -4,6 +4,7 @@
 #include "ui_main.h"
 #include "seed_link.h"
 #include "knobs.h"
+#include "nam_store.h"
 
 void app_main(void) {
     // NVS holds the saved rig and settings (ui_main.c). A layout change from an IDF upgrade or
@@ -26,5 +27,6 @@ void app_main(void) {
     // After ui_main_init(): rig_state now holds the restored rig, which the first snapshot carries.
     seed_link_init();
     knobs_init();
+    nam_store_start(); // reads the SD card in the background
     diag_start_serial_stream();
 }

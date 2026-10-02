@@ -10,6 +10,7 @@
 #include "seed_link.h"
 #include "rig_state.h"
 #include "amp_models.h"
+#include "nam_store.h"
 #include "seed_link_proto.h"
 #include "esp_log.h"
 #include "nvs.h"
@@ -572,7 +573,7 @@ static void model_card_cb(lv_event_t *e) {
     const ui_effect_def_t *def = &g_effects[fx];
     if (fx == FX_AMP) {
         amp_model_t am;
-        if (!amp_models_get(m, &am)) return;
+        if (!amp_models_get(m, &am) || am.rejected) return; // a file that can't run: its card says why
         if (am.builtin) {
             // A built-in also loads its suggested knob positions, as the other effects' models do.
             const int8_t *values = m < def->model_count ? def->models[m].values : NULL;
@@ -593,10 +594,12 @@ static void model_card_cb(lv_event_t *e) {
     ui_main_mark_dirty();
 }
 
-static void add_model_card(int index, const char *title, const char *desc, bool sel, lv_color_t color) {
+#define MODEL_CARD_H 72 // name + two description lines; every card in the row is this tall
+
+static void add_model_card(int index, const char *title, const char *desc, bool sel, lv_color_t color, bool disabled) {
     lv_obj_t *card = lv_obj_create(s_model_row);
     lv_obj_remove_style_all(card);
-    lv_obj_set_size(card, 196, LV_SIZE_CONTENT);
+    lv_obj_set_size(card, 196, MODEL_CARD_H);
     lv_obj_set_style_bg_color(card, UI_COLOR_CARD, 0);
     lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(card, 2, 0);
@@ -611,12 +614,12 @@ static void add_model_card(int index, const char *title, const char *desc, bool 
     lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(card, model_card_cb, LV_EVENT_CLICKED, (void *)(uintptr_t)index);
 
-    lv_obj_t *name = make_label(card, title, &lv_font_montserrat_14, sel ? color : UI_COLOR_TEXT);
+    lv_obj_t *name = make_label(card, title, &lv_font_montserrat_14, sel ? color : disabled ? UI_COLOR_TEXT_MUTED : UI_COLOR_TEXT);
     lv_obj_set_width(name, LV_PCT(100));
     lv_label_set_long_mode(name, LV_LABEL_LONG_DOT);
-    lv_obj_t *d = make_label(card, desc, &lv_font_montserrat_12, UI_COLOR_TEXT_MUTED);
-    lv_obj_set_width(d, LV_PCT(100));
-    lv_label_set_long_mode(d, LV_LABEL_LONG_WRAP);
+    lv_obj_t *d = make_label(card, desc, &lv_font_montserrat_12, disabled ? UI_COLOR_WARN : UI_COLOR_TEXT_MUTED);
+    lv_obj_set_size(d, LV_PCT(100), 2 * lv_font_get_line_height(&lv_font_montserrat_12));
+    lv_label_set_long_mode(d, LV_LABEL_LONG_DOT); // at most two lines, then "..."
 }
 
 static void build_model_cards(const ui_effect_def_t *def) {
@@ -633,9 +636,9 @@ static void build_model_cards(const ui_effect_def_t *def) {
         if (fx == FX_AMP) {
             amp_model_t am;
             if (!amp_models_get(m, &am)) break;
-            add_model_card(m, am.name, am.desc, m == sel, def->color);
+            add_model_card(m, am.name, am.desc, m == sel, def->color, am.rejected);
         } else {
-            add_model_card(m, def->models[m].name, def->models[m].desc, m == sel, def->color);
+            add_model_card(m, def->models[m].name, def->models[m].desc, m == sel, def->color, false);
         }
     }
     if (fx == FX_AMP) s_amp_cards_version = amp_models_version();
@@ -656,6 +659,14 @@ static void amp_status_text(char *buf, size_t len) {
         snprintf(buf, len, "This rig's SD amp profile (%08lx) is not on the card.", (unsigned long)r->amp_sd_hash);
         return;
     }
+    if (r->amp_sd_hash && s.upload_hash == r->amp_sd_hash && s.upload_state == SEED_UPLOAD_RUNNING) {
+        snprintf(buf, len, "Uploading to the Seed: %u%%%s", s.upload_pct, mock);
+        return;
+    }
+    if (r->amp_sd_hash && s.upload_hash == r->amp_sd_hash && s.upload_state == SEED_UPLOAD_FAILED) {
+        snprintf(buf, len, "Upload failed: %s. Retrying.", s.upload_note);
+        return;
+    }
     if (s.status_flags & SLP_STATUS_MODEL_FAILED) {
         snprintf(buf, len, "The Seed failed to load this model%s.", mock);
         return;
@@ -673,8 +684,12 @@ static void amp_status_text(char *buf, size_t len) {
 
 static void refresh_amp_status(void) {
     if (s_selected_fx != FX_AMP) return;
-    char text[96];
-    amp_status_text(text, sizeof(text));
+    char text[200];
+    amp_status_text(text, 100);
+    nam_store_status_t sd;
+    nam_store_status(&sd);
+    const size_t n = strlen(text);
+    snprintf(text + n, sizeof(text) - n, "\n%s", sd.status);
     if (strcmp(lv_label_get_text(s_amp_status), text) != 0) lv_label_set_text(s_amp_status, text);
 }
 
@@ -803,6 +818,8 @@ static void build_fx_panel(lv_obj_t *screen) {
     lv_obj_set_scroll_dir(s_model_row, LV_DIR_HOR);
     lv_obj_set_scrollbar_mode(s_model_row, LV_SCROLLBAR_MODE_OFF);
     s_amp_status = make_label(main, "", &lv_font_montserrat_12, UI_COLOR_TEXT_MUTED);
+    lv_obj_set_width(s_amp_status, LV_PCT(100));
+    lv_label_set_long_mode(s_amp_status, LV_LABEL_LONG_DOT);
     lv_obj_add_flag(s_amp_status, LV_OBJ_FLAG_HIDDEN);
 
     lv_obj_t *knob_area = make_row(main, 24);

@@ -243,9 +243,14 @@ static void check_lvgl(void) {
     ESP_LOGW(TAG, "LVGL task unresponsive for %lus", (unsigned long)s_lvgl_stuck_s);
     if (s_lvgl_stuck_s == 2) {
 #if CONFIG_FREERTOS_USE_TRACE_FACILITY && CONFIG_FREERTOS_USE_STATS_FORMATTING_FUNCTIONS
-        static char list[2048];
-        vTaskList(list);
-        printf("TASKS (name state prio stack_free num core)\n%s", list);
+        // Only needed when the display has stalled: borrow the buffer from PSRAM rather than
+        // keep 2 KB of internal RAM reserved for it.
+        char *list = heap_caps_malloc(2048, MALLOC_CAP_SPIRAM);
+        if (list) {
+            vTaskList(list);
+            printf("TASKS (name state prio stack_free num core)\n%s", list);
+            heap_caps_free(list);
+        }
 #endif
     }
     if (s_lvgl_stuck_s >= 2) {

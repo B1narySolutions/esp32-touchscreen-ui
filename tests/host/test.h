@@ -37,3 +37,4 @@ static inline unsigned test_rand(unsigned *s) {
 void test_proto(void);
 void test_fuzz(void);
 void test_coalesce(void);
+void test_nam(void);

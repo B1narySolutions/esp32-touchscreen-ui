@@ -35,7 +35,13 @@ typedef struct {
     uint8_t  active_kind;        // the model the Seed reports running: SLP_MODEL_*
     uint8_t  active_builtin;     // its AmpId, for built-ins
     uint32_t active_hash;        // its CRC32, for uploaded SD profiles
+    uint8_t  upload_state;       // SEED_UPLOAD_*
+    uint8_t  upload_pct;
+    uint32_t upload_hash;        // the SD profile being (or last) uploaded
+    char     upload_note[48];    // its name while running, the reason after a failure
 } seed_link_stats_t;
+
+enum { SEED_UPLOAD_NONE, SEED_UPLOAD_RUNNING, SEED_UPLOAD_DONE, SEED_UPLOAD_FAILED };
 
 // Starts the link task. Call once, after rig_state holds the boot state.
 void seed_link_init(void);

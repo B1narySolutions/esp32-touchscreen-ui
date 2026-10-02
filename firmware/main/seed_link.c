@@ -17,6 +17,8 @@
 #include "freertos/idf_additions.h"
 
 #include "amp_models.h"
+#include "nam_a2.h"
+#include "nam_store.h"
 #include "param_map_gen.h"
 #include "rig_state.h"
 #include "seed_link_proto.h"
@@ -37,6 +39,13 @@ static const char *TAG = "seed_link";
 #define RX_RING               2048
 #define TX_RING               0      // writes block until queued in the FIFO; a snapshot takes ~4 ms
 #define EVENT_QUEUE_LEN       12
+#define UP_WINDOW             4        // MODEL_CHUNKs in flight
+#define UP_CHUNK_TIMEOUT_US   150000
+#define UP_CHUNK_TRIES        5
+#define UP_BEGIN_TIMEOUT_US   500000
+#define UP_RESULT_TIMEOUT_US  3000000  // the Seed checks the CRC and stores 7.5 KB
+#define UP_RETRY_AFTER_US     5000000  // after a failed upload, before trying again
+enum { UP_IDLE, UP_BEGIN, UP_CHUNKS, UP_COMMIT };
 #define TASK_STACK            6144
 #define TASK_PRIORITY         5      // below the LVGL task (6), which runs on the other core
 #define TASK_CORE             0
@@ -79,6 +88,19 @@ typedef struct {
     uint32_t uart_frame_errors;
     // Counter bases for seed_link_reset_counters(): the Seed's counters are since its boot.
     uint32_t clip_base, overrun_base, err_base;
+    // SD amp profile upload (MODEL_BEGIN / CHUNK / COMMIT)
+    struct {
+        int state;                  // UP_*
+        uint32_t hash;              // CRC32 of the weights being uploaded
+        uint8_t transfer_id;
+        const uint8_t *data;        // packed weights in PSRAM (nam_store)
+        uint32_t size, next_off, acked_bytes;
+        uint8_t begin_seq, tries;
+        int64_t deadline_us, retry_after_us;
+        struct { bool used; uint8_t seq, tries; uint32_t off; int64_t sent_us; } win[UP_WINDOW];
+        uint32_t seed_has[8];       // hashes the Seed has stored since its boot
+        int seed_has_n;
+    } up;
 } link_t;
 // In PSRAM (allocated in seed_link_init): internal RAM is reserved for what must be there.
 static link_t *L;
@@ -279,6 +301,167 @@ static void builtin_name(uint8_t id, char *out, size_t len) {
     portEXIT_CRITICAL(&s_mux);
 }
 
+// ---------------------------------------------------------------------------------------------
+// Uploading SD amp profiles
+
+static bool seed_has(uint32_t hash) {
+    for (int i = 0; i < L->up.seed_has_n; i++) if (L->up.seed_has[i] == hash) return true;
+    return false;
+}
+
+static void publish_upload(int state, uint8_t pct, const char *note) {
+    portENTER_CRITICAL(&s_mux);
+    s_stats.upload_state = (uint8_t)state;
+    s_stats.upload_pct = pct;
+    s_stats.upload_hash = L->up.hash;
+    if (note) strlcpy(s_stats.upload_note, note, sizeof(s_stats.upload_note));
+    portEXIT_CRITICAL(&s_mux);
+}
+
+static void upload_fail(const char *why) {
+    ESP_LOGW(TAG, "upload of %08lx failed: %s", (unsigned long)L->up.hash, why);
+    uint8_t b[8];
+    slp_model_end_t ab = { L->up.transfer_id, SLP_ERR_TIMEOUT, 0 };
+    send_frame(SLP_MODEL_ABORT, b, slp_model_end_pack(&ab, b, sizeof(b)), 0);
+    L->up.state = UP_IDLE;
+    L->up.retry_after_us = now_us() + UP_RETRY_AFTER_US;
+    publish_upload(SEED_UPLOAD_FAILED, 0, why);
+}
+
+static void send_chunk(int slot, uint32_t off) {
+    const uint32_t n = L->up.size - off < SLP_CHUNK_MAX ? L->up.size - off : SLP_CHUNK_MAX;
+    slp_model_chunk_t c = { L->up.transfer_id, off, (uint8_t)n, L->up.data + off };
+    uint8_t b[SLP_MAX_PAYLOAD];
+    L->up.win[slot].seq = L->seq; // the seq send_frame is about to use
+    L->up.win[slot].off = off;
+    L->up.win[slot].sent_us = now_us();
+    L->up.win[slot].used = true;
+    send_frame(SLP_MODEL_CHUNK, b, slp_model_chunk_pack(&c, b, sizeof(b)), SLP_FLAG_ACK_REQ);
+}
+
+// Starts an upload if the selected amp is an SD profile the Seed doesn't hold yet.
+static void upload_start_if_needed(int64_t now) {
+    rig_full_t r;
+    rig_get_full(&r);
+    const uint32_t hash = r.r.amp_sd_hash;
+    if (!hash || seed_has(hash) || L->up.state != UP_IDLE) return;
+    if (hash == L->up.hash && now < L->up.retry_after_us) return;
+    char name[64];
+    const float *w = nam_store_weights(hash, name, sizeof(name));
+    if (!w) return; // the profile isn't on the card (yet); the UI says so
+
+    L->up.hash = hash;
+    L->up.data = (const uint8_t *)w;
+    L->up.size = NAM_A2_WEIGHT_COUNT * 4;
+    L->up.next_off = L->up.acked_bytes = 0;
+    L->up.transfer_id++;
+    memset(L->up.win, 0, sizeof(L->up.win));
+    slp_model_begin_t b = { L->up.transfer_id, NAM_A2_WEIGHT_COUNT, L->up.size, hash, "" };
+    strlcpy(b.name, name, sizeof(b.name));
+    uint8_t p[64];
+    L->up.begin_seq = L->seq;
+    send_frame(SLP_MODEL_BEGIN, p, slp_model_begin_pack(&b, p, sizeof(p)), SLP_FLAG_ACK_REQ);
+    L->up.state = UP_BEGIN;
+    L->up.deadline_us = now + UP_BEGIN_TIMEOUT_US;
+    ESP_LOGI(TAG, "uploading \"%s\" (%08lx) to the Seed", name, (unsigned long)hash);
+    publish_upload(SEED_UPLOAD_RUNNING, 0, name);
+}
+
+static void upload_tick(int64_t now) {
+    switch (L->up.state) {
+    case UP_IDLE:
+        upload_start_if_needed(now);
+        return;
+    case UP_BEGIN:
+        if (now > L->up.deadline_us) {
+            if (++L->up.tries >= UP_CHUNK_TRIES) {
+                upload_fail("the Seed didn't answer MODEL_BEGIN");
+                return;
+            }
+            const uint8_t tries = L->up.tries;
+            L->up.state = UP_IDLE; // send BEGIN again
+            L->up.retry_after_us = 0;
+            upload_start_if_needed(now);
+            L->up.tries = tries;
+        }
+        return;
+    case UP_CHUNKS:
+        for (int i = 0; i < UP_WINDOW; i++) {
+            if (L->up.win[i].used && now - L->up.win[i].sent_us > UP_CHUNK_TIMEOUT_US) {
+                if (L->up.win[i].tries >= UP_CHUNK_TRIES) {
+                    upload_fail("a chunk was never acknowledged");
+                    return;
+                }
+                const uint8_t tries = L->up.win[i].tries;
+                send_chunk(i, L->up.win[i].off); // chunks are idempotent by offset
+                L->up.win[i].tries = tries + 1;
+            }
+        }
+        for (int i = 0; i < UP_WINDOW && L->up.next_off < L->up.size; i++) {
+            if (!L->up.win[i].used) {
+                send_chunk(i, L->up.next_off);
+                L->up.win[i].tries = 1;
+                L->up.next_off += SLP_CHUNK_MAX;
+            }
+        }
+        if (L->up.next_off >= L->up.size) {
+            bool pending = false;
+            for (int i = 0; i < UP_WINDOW; i++) pending |= L->up.win[i].used;
+            if (!pending) {
+                uint8_t b[8];
+                slp_model_end_t c = { L->up.transfer_id, 0, 0 };
+                send_frame(SLP_MODEL_COMMIT, b, slp_model_end_pack(&c, b, sizeof(b)), 0);
+                L->up.state = UP_COMMIT;
+                L->up.deadline_us = now + UP_RESULT_TIMEOUT_US;
+            }
+        }
+        return;
+    case UP_COMMIT:
+        if (now > L->up.deadline_us) upload_fail("no MODEL_RESULT from the Seed");
+        return;
+    }
+}
+
+static void upload_on_ack(const slp_ack_t *a) {
+    if (a->acked_type == SLP_MODEL_BEGIN && L->up.state == UP_BEGIN && a->acked_seq == L->up.begin_seq) {
+        if (a->status != SLP_OK) {
+            upload_fail("the Seed refused the model");
+            return;
+        }
+        L->up.state = UP_CHUNKS;
+        return;
+    }
+    if (a->acked_type != SLP_MODEL_CHUNK || L->up.state != UP_CHUNKS) return;
+    for (int i = 0; i < UP_WINDOW; i++) {
+        if (L->up.win[i].used && L->up.win[i].seq == a->acked_seq) {
+            if (a->status != SLP_OK) {
+                upload_fail("the Seed rejected a chunk");
+                return;
+            }
+            L->up.win[i].used = false;
+            L->up.acked_bytes += SLP_CHUNK_MAX;
+            const uint32_t done = L->up.acked_bytes < L->up.size ? L->up.acked_bytes : L->up.size;
+            publish_upload(SEED_UPLOAD_RUNNING, (uint8_t)(done * 100 / L->up.size), NULL);
+            return;
+        }
+    }
+}
+
+static void upload_on_result(const slp_model_end_t *r) {
+    if (L->up.state != UP_COMMIT || r->transfer_id != L->up.transfer_id) return;
+    if (r->status != SLP_OK || r->crc32 != L->up.hash) {
+        upload_fail(r->status == SLP_ERR_CRC ? "CRC mismatch on the Seed" : "the Seed couldn't store the model");
+        return;
+    }
+    if (L->up.seed_has_n < (int)(sizeof(L->up.seed_has) / sizeof(L->up.seed_has[0]))) {
+        L->up.seed_has[L->up.seed_has_n++] = L->up.hash;
+    }
+    L->up.state = UP_IDLE;
+    L->pend_fx = true; // SELECT_MODEL again, now that the Seed holds it
+    ESP_LOGI(TAG, "upload of %08lx verified by the Seed (CRC match)", (unsigned long)L->up.hash);
+    publish_upload(SEED_UPLOAD_DONE, 100, NULL);
+}
+
 static void on_hello(const slp_frame_t *f) {
     slp_hello_t h;
     if (!slp_hello_unpack(f->payload, f->len, &h)) return;
@@ -318,6 +501,11 @@ static void on_hello(const slp_frame_t *f) {
                  (unsigned long)h.sample_rate_hz, h.block_size, n);
         send_hello();                   // answer each new peer boot once
         slp_coal_invalidate(&L->coal);   // the peer has none of our values
+        L->up.seed_has_n = 0;            // nor any uploaded model
+        if (L->up.state != UP_IDLE) {
+            L->up.state = UP_IDLE;
+            publish_upload(SEED_UPLOAD_NONE, 0, NULL);
+        }
     }
     // Full state for a Seed we aren't in sync with: a new boot, or after the link was down. (A
     // repeat HELLO from the handshake itself needs nothing.)
@@ -380,7 +568,7 @@ static void on_frame(const slp_frame_t *f) {
         // a frame of it was lost; send it again now rather than at the next 5 s period. Only
         // for a Seed that reports applied ids at all, and at most once per second.
         if (st.applied_snapshot_id) L->peer_confirms = true;
-        if (L->peer_confirms && st.applied_snapshot_id != L->snapshot_id && L->snapshot_id &&
+        if (L->peer_confirms && !L->want_snapshot && st.applied_snapshot_id != L->snapshot_id && L->snapshot_id &&
             now - L->snapshot_sent_us > SNAPSHOT_CONFIRM_US && now - L->last_resync_us > RESYNC_MIN_GAP_US) {
             L->last_resync_us = now;
             L->want_snapshot = SLP_SNAP_RESYNC;
@@ -397,6 +585,16 @@ static void on_frame(const slp_frame_t *f) {
         s_stats.clip_count = m.clip_count - L->clip_base;
         s_stats.meters_valid = true;
         portEXIT_CRITICAL(&s_mux);
+        break;
+    }
+    case SLP_ACK: {
+        slp_ack_t a;
+        if (slp_ack_unpack(f->payload, f->len, &a)) upload_on_ack(&a);
+        break;
+    }
+    case SLP_MODEL_RESULT: {
+        slp_model_end_t r;
+        if (slp_model_end_unpack(f->payload, f->len, &r)) upload_on_result(&r);
         break;
     }
     case SLP_LOG:
@@ -464,6 +662,7 @@ static void link_task(void *arg) {
         if (L->peer_heard) {
             uint32_t w = ms_until(L->next_snapshot_us, now); if (w < wait) wait = w;
             w = flush_wait_ms((uint32_t)(now / 1000)); if (w < wait) wait = w;
+            if (L->up.state != UP_IDLE && wait > 20) wait = 20;
         }
 
         uart_event_t ev;
@@ -493,6 +692,7 @@ static void link_task(void *arg) {
             if (L->want_snapshot) send_snapshot(L->want_snapshot);
             else if (now >= L->next_snapshot_us) send_snapshot(SLP_SNAP_PERIODIC);
             flush_state((uint32_t)(now / 1000));
+            upload_tick(now);
         } else {
             // Nobody to send to: the snapshot on (re)connect carries everything.
             L->pend_chain = L->pend_fx = L->pend_master = false;

@@ -12,6 +12,7 @@ int main(void) {
         { "proto (COBS, CRC, frames, messages)", test_proto },
         { "fuzz (decoder + unpackers)", test_fuzz },
         { "coalesce", test_coalesce },
+        { "nam (A2 loader, golden)", test_nam },
     };
     for (size_t i = 0; i < sizeof(tests) / sizeof(tests[0]); i++) {
         const int before = g_failures;

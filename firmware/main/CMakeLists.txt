@@ -10,6 +10,9 @@ idf_component_register(
         "rig/rig_state.c"
         "rig/amp_models.c"
         "knobs/knobs.c"
+        "sd/sd_storage.c"
+        "nam/nam_a2.c"
+        "nam/nam_store.c"
         "ui/ui_main.c"
         "ui/ui_effects_data.c"
         "ui/ui_effect_chip.c"
@@ -23,6 +26,8 @@ idf_component_register(
         "rig"
         "seed_link_proto"
         "knobs"
+        "sd"
+        "nam"
 )
 
 # Fail the build if the wire parameter registry (tools/param_ids.json) and the knobs defined in

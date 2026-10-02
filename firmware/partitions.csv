@@ -1,0 +1,6 @@
+# Name,   Type, SubType, Offset,  Size
+# nvs and phy_init keep the default layout's offsets and sizes, so saved settings survive the
+# switch from the default table. The app gets 4 MB of the 16 MB flash (the default gave 1 MB).
+nvs,      data, nvs,     0x9000,  0x6000
+phy_init, data, phy,     0xf000,  0x1000
+factory,  app,  factory, 0x10000, 4M

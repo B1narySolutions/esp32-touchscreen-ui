@@ -5,6 +5,8 @@ project(seed_link_host_tests C)
 
 set(PROTO_DIR "${CMAKE_CURRENT_LIST_DIR}/../../firmware/main/seed_link_proto")
 set(PROTO_SRC "${PROTO_DIR}/seed_link_proto.c" "${PROTO_DIR}/slp_coalesce.c")
+set(NAM_DIR "${CMAKE_CURRENT_LIST_DIR}/../../firmware/main/nam")
+get_filename_component(REPO_ROOT "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
 
 if(MSVC)
     set(WARN /W4 /WX /wd4204) # 4204: non-constant aggregate initializer (valid C99)
@@ -15,15 +17,22 @@ else()
     set(SAN -fsanitize=address,undefined -fno-omit-frame-pointer -g)
 endif()
 
-add_library(slp STATIC ${PROTO_SRC})
-target_include_directories(slp PUBLIC "${PROTO_DIR}")
+add_library(slp STATIC ${PROTO_SRC} "${NAM_DIR}/nam_a2.c")
+target_include_directories(slp PUBLIC "${PROTO_DIR}" "${NAM_DIR}")
 target_compile_options(slp PRIVATE ${WARN} ${SAN})
 set_property(TARGET slp PROPERTY C_STANDARD 99)
 
-add_executable(host_tests main.c test_proto.c test_fuzz.c test_coalesce.c)
+add_executable(host_tests main.c test_proto.c test_fuzz.c test_coalesce.c test_nam.c)
+target_compile_definitions(host_tests PRIVATE REPO_ROOT="${REPO_ROOT}")
 target_link_libraries(host_tests PRIVATE slp)
 target_compile_options(host_tests PRIVATE ${WARN} ${SAN})
 set_property(TARGET host_tests PROPERTY C_STANDARD 11)
+
+# Runs the .nam loader on one file (tools/nam_diff_test.py compares it with convert_a2.py).
+add_executable(nam_check nam_check.c)
+target_link_libraries(nam_check PRIVATE slp)
+target_compile_options(nam_check PRIVATE ${WARN} ${SAN})
+set_property(TARGET nam_check PROPERTY C_STANDARD 11)
 
 # Prints the hex examples used in docs/SEED_LINK_PROTOCOL.md.
 add_executable(slp_examples examples.c)
@@ -34,6 +43,7 @@ set_property(TARGET slp_examples PROPERTY C_STANDARD 11)
 if(NOT MSVC)
     target_link_options(host_tests PRIVATE ${SAN})
     target_link_options(slp_examples PRIVATE ${SAN})
+    target_link_options(nam_check PRIVATE ${SAN})
 else()
     # The ASan runtime DLL is only on PATH inside a vcvars shell; put a copy next to the
     # executables so they also run from a plain prompt (tools/test_slp_py.py runs slp_examples).
