@@ -1,0 +1,36 @@
+menu "Seed link (ESP32 <-> Daisy Seed3)"
+
+    config SEED_LINK_ENABLE
+        bool "Enable the Seed link UART"
+        default y
+        help
+            Runs the Seed link task on the UART below. The console must not use the same UART
+            (sdkconfig.defaults moves it to the native USB Serial/JTAG port).
+
+    config SEED_LINK_UART_NUM
+        int "UART number"
+        range 0 2
+        default 0
+        depends on SEED_LINK_ENABLE
+        help
+            UART0 on GPIO43/44 is what the board's UART selection switch (SW1) routes to the
+            UART2 header (H3, to the Seed) or to the USB TO UART port (CH343, for the mock Seed).
+
+    config SEED_LINK_TX_GPIO
+        int "TX GPIO"
+        default 43
+        depends on SEED_LINK_ENABLE
+
+    config SEED_LINK_RX_GPIO
+        int "RX GPIO"
+        default 44
+        depends on SEED_LINK_ENABLE
+
+    config SEED_LINK_BAUD
+        int "Baud rate"
+        default 1000000
+        depends on SEED_LINK_ENABLE
+        help
+            Must match the Seed (and tools/mock_seed.py --baud).
+
+endmenu

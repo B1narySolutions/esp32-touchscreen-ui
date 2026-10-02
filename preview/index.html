@@ -79,10 +79,10 @@ const ALL_EFFECT_IDS = ['gate','comp','eq','drive','amp','octave','chorus','phas
 
 const MODEL_OPTIONS = {
   amp: [
-    { name: "Fender '65 Twin Reverb", desc: "Glassy clean headroom with built-in spring reverb character." },
-    { name: "Vox AC30", desc: "Chimey British top-boost with fast breakup." },
-    { name: "Marshall Plexi", desc: "Classic crunch that pushes into rock saturation." },
-    { name: "Mesa Rectifier", desc: "High-gain modern voicing with a tight low end." }
+    // The Seed's built-in NAM amps (AmpId order); the device adds amp profiles imported from SD.
+    { name: "Fender Twin65", desc: "Fender Twin Reverb '65 reissue, clean headroom. NAM A2 capture." },
+    { name: "Vox AC30 Chimey", desc: "Vox AC30 Custom Classic, chimey top-boost breakup. NAM A2 capture." },
+    { name: "Marshall JCM800 G5", desc: "Marshall JCM800 2203, classic rock crunch to lead. NAM A2 capture." }
   ],
   drive: [
     { name: "Tube Screamer", desc: "Mid-forward overdrive with a smooth, compressed clip." },
@@ -121,10 +121,9 @@ const MODEL_OPTIONS = {
 };
 
 const MODEL_VALUES = {
-  "Fender '65 Twin Reverb": { gain:25, bass:55, mid:50, treble:60, level:60 },
-  "Vox AC30":               { gain:45, bass:45, mid:60, treble:65, level:62 },
-  "Marshall Plexi":         { gain:62, bass:55, mid:58, treble:68, level:66 },
-  "Mesa Rectifier":         { gain:82, bass:60, mid:35, treble:72, level:70 },
+  "Fender Twin65":          { gain:25, bass:55, mid:50, treble:60, level:60 },
+  "Vox AC30 Chimey":        { gain:45, bass:45, mid:60, treble:65, level:62 },
+  "Marshall JCM800 G5":     { gain:62, bass:55, mid:58, treble:68, level:66 },
   "Tube Screamer":          { gain:45, tone:60, level:60 },
   "Big Muff":               { gain:75, tone:45, level:50 },
   "Klon-style":             { gain:30, tone:55, level:65 },
@@ -169,7 +168,7 @@ const DEFAULT_STATE_MAP = {
   reverb:'bypass', eq:'bypass', octave:'bypass', phaser:'bypass', tremolo:'bypass', cab:'on'
 };
 const DEFAULT_MODELS = {
-  amp:"Fender '65 Twin Reverb", drive:'Tube Screamer', chorus:'Classic Chorus',
+  amp:"Fender Twin65", drive:'Tube Screamer', chorus:'Classic Chorus',
   delay:'Digital Delay', reverb:'Hall', tremolo:'Sine', cab:'1x12 Open Back'
 };
 
@@ -186,7 +185,7 @@ const PRESETS = [
       reverb:{decay:40,predelay:15,tone:55,mix:25},
       cab:{lowcut:20,highcut:70,level:55}
     },
-    models: { amp: "Fender '65 Twin Reverb", cab: '1x12 Open Back' }
+    models: { amp: "Fender Twin65", cab: '1x12 Open Back' }
   },
   {
     name: 'Crunch Rock', tagline: 'Driven rhythm with amp-like grit',
@@ -198,7 +197,7 @@ const PRESETS = [
       reverb:{decay:30,predelay:10,tone:50,mix:18},
       cab:{lowcut:25,highcut:65,level:58}
     },
-    models: { drive: 'Tube Screamer', amp: 'Marshall Plexi', cab: '4x12 Greenback' }
+    models: { drive: 'Tube Screamer', amp: 'Marshall JCM800 G5', cab: '4x12 Greenback' }
   },
   {
     name: 'Lead Boost', tagline: 'Singing sustain for solos',
@@ -212,7 +211,7 @@ const PRESETS = [
       reverb:{decay:45,predelay:15,tone:55,mix:20},
       cab:{lowcut:30,highcut:60,level:60}
     },
-    models: { drive: 'Klon-style', amp: 'Mesa Rectifier', delay: 'Digital Delay', reverb: 'Hall', cab: '4x12 V30 Modern' }
+    models: { drive: 'Klon-style', amp: 'Marshall JCM800 G5', delay: 'Digital Delay', reverb: 'Hall', cab: '4x12 V30 Modern' }
   },
   {
     name: 'Ambient Wash', tagline: 'Spacious pads and long tails',
@@ -226,7 +225,7 @@ const PRESETS = [
       reverb:{decay:80,predelay:30,tone:50,mix:60},
       cab:{lowcut:15,highcut:85,level:52}
     },
-    models: { amp: 'Vox AC30', chorus: 'Ensemble', delay: 'Tape Echo', reverb: 'Hall', cab: '2x12 Blue Alnico' }
+    models: { amp: 'Vox AC30 Chimey', chorus: 'Ensemble', delay: 'Tape Echo', reverb: 'Hall', cab: '2x12 Blue Alnico' }
   },
   {
     name: 'Metal Tight', tagline: 'Palm-muted precision, tight low end',
@@ -240,7 +239,7 @@ const PRESETS = [
       eq:{low:40,mid:35,high:55,level:58},
       cab:{lowcut:45,highcut:55,level:62}
     },
-    models: { drive: 'Rat Distortion', amp: 'Mesa Rectifier', cab: '4x12 V30 Modern' }
+    models: { drive: 'Rat Distortion', amp: 'Marshall JCM800 G5', cab: '4x12 V30 Modern' }
   }
 ];
 

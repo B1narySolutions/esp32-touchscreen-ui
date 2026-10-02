@@ -132,28 +132,46 @@ static void refresh(lv_timer_t *t) {
 
     seed_link_stats_t s;
     seed_link_get_stats(&s);
-    lv_obj_set_style_bg_color(s_seed_dot, s.connected ? UI_COLOR_OK : UI_COLOR_MUTE, 0);
-    if (s.connected) lv_obj_add_flag(s_seed_banner, LV_OBJ_FLAG_HIDDEN);
-    else lv_obj_clear_flag(s_seed_banner, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_style_bg_color(s_seed_dot, s.connected ? (s.peer_mock ? UI_COLOR_WARN : UI_COLOR_OK) : UI_COLOR_MUTE, 0);
+    // The banner explains what isn't real: no link at all, or a mock Seed simulating its values.
+    if (s.connected && !s.peer_mock) {
+        lv_obj_add_flag(s_seed_banner, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        const char *msg = s.connected
+            ? "MOCK SEED: connected to tools/mock_seed.py on a PC. DSP load, model status and meter "
+              "levels below are SIMULATED by the script; link counters and round-trip time are real."
+            : "No link to the Daisy Seed. Waiting for its HELLO on the Seed link UART.";
+        if (strcmp(lv_label_get_text(s_seed_banner), msg) != 0) lv_label_set_text(s_seed_banner, msg);
+        lv_obj_clear_flag(s_seed_banner, LV_OBJ_FLAG_HIDDEN);
+    }
     if (s.connected) lv_obj_clear_state(s_ping_btn, LV_STATE_DISABLED);
     else lv_obj_add_state(s_ping_btn, LV_STATE_DISABLED);
 
-    set_val(s_seed_vals[0], "%s", s.connected ? "Connected" : "Not connected");
-    set_val(s_seed_vals[11], "not chosen yet");
+    set_val(s_seed_vals[0], "%s", s.connected ? (s.peer_mock ? "Connected (MOCK)" : "Connected") : "Not connected");
+    set_val(s_seed_vals[11], "%s", seed_link_transport());
+    // Link counters are this ESP32's own measurements, real with or without a Seed.
+    set_val(s_seed_vals[1], "%lu / %lu", (unsigned long)s.packets_tx, (unsigned long)s.packets_rx);
+    set_val(s_seed_vals[2], "%lu (UART overruns %lu)", (unsigned long)s.link_errors, (unsigned long)s.uart_overruns);
     if (!s.connected) {
-        for (int i = 1; i < SEED_ROWS - 1; i++) set_dash(s_seed_vals[i]);
+        for (int i = 3; i < SEED_ROWS - 1; i++) set_dash(s_seed_vals[i]);
         return;
     }
-    set_val(s_seed_vals[1], "%lu / %lu", (unsigned long)s.packets_tx, (unsigned long)s.packets_rx);
-    set_val(s_seed_vals[2], "%lu", (unsigned long)s.link_errors);
-    set_val(s_seed_vals[3], "%.2f ms", s.rtt_ms);
+    if (s.rtt_ms > 0) set_val(s_seed_vals[3], "%.2f ms", s.rtt_ms);
+    else set_val(s_seed_vals[3], "press Ping SEED");
     set_val(s_seed_vals[4], "%s", s.dsp_fw_version);
     set_val(s_seed_vals[5], "%lu Hz / %u", (unsigned long)s.sample_rate_hz, s.block_size);
-    set_val(s_seed_vals[6], "%.1f %%", s.dsp_cpu_pct);
-    set_val(s_seed_vals[7], "%s", s.nam_model);
-    set_val(s_seed_vals[8], "%.1f dBFS", s.input_peak_dbfs);
-    set_val(s_seed_vals[9], "%.1f dBFS", s.output_peak_dbfs);
-    set_val(s_seed_vals[10], "%lu", (unsigned long)s.clip_count);
+    set_val(s_seed_vals[6], "%.1f %% (peak %.1f %%, %lu overruns)%s", s.dsp_cpu_pct, s.dsp_cpu_peak_pct,
+            (unsigned long)s.dsp_overruns, s.peer_mock ? " MOCK" : "");
+    set_val(s_seed_vals[7], "%s%s", s.nam_model[0] ? s.nam_model : "-", s.peer_mock ? " MOCK" : "");
+    if (s.meters_valid) {
+        set_val(s_seed_vals[8], "%.1f dBFS%s", s.input_peak_dbfs, s.peer_mock ? " MOCK" : "");
+        set_val(s_seed_vals[9], "%.1f dBFS%s", s.output_peak_dbfs, s.peer_mock ? " MOCK" : "");
+        set_val(s_seed_vals[10], "%lu%s", (unsigned long)s.clip_count, s.peer_mock ? " MOCK" : "");
+    } else {
+        set_dash(s_seed_vals[8]);
+        set_dash(s_seed_vals[9]);
+        set_dash(s_seed_vals[10]);
+    }
 }
 
 static void touch_pad_cb(lv_event_t *e) {

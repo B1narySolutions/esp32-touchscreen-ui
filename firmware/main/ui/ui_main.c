@@ -8,6 +8,9 @@
 #include "ui_test_mode.h"
 #include "board_init.h"
 #include "seed_link.h"
+#include "rig_state.h"
+#include "amp_models.h"
+#include "seed_link_proto.h"
 #include "esp_log.h"
 #include "nvs.h"
 #include <ctype.h>
@@ -17,16 +20,12 @@
 static const char *TAG = "ui";
 
 // ---------------------------------------------------------------------------------------------
-// App state. Mirrors the preview's App component state (preview/index.html).
+// App state. Mirrors the preview's App component state (preview/index.html). The audio state
+// (chain, on/bypass, models, knobs, master, mute) lives in rig_state: read it through rig(),
+// change it only through the rig_set_*() calls, which also tell the Seed link.
 
-static uint8_t s_chain[UI_CHAIN_MAX] = { FX_GATE, FX_COMP, FX_DRIVE, FX_AMP, FX_CHORUS, FX_DELAY, FX_REVERB };
-static uint8_t s_chain_len = 7;
-static bool s_effect_on[UI_EFFECT_COUNT] = { [FX_AMP] = true, [FX_CAB] = true };
-static uint8_t s_model[UI_EFFECT_COUNT];  // index into g_effects[fx].models; 0 = default
 static uint8_t s_selected_fx = FX_AMP;
 static bool s_dirty = false;
-static bool s_muted = false;
-static int32_t s_master_volume = 63;
 static bool s_wifi_on = true;   // TODO: drive the real radios; these are UI settings only so far
 static bool s_ble_on = true;
 static char s_preset_name[32] = "Preset 1";
@@ -37,12 +36,12 @@ static char s_preset_name[32] = "Preset 1";
 static lv_obj_t *s_chips[UI_EFFECT_COUNT];   // indexed by fx, NULL when not in the chain
 static lv_obj_t *s_rail;                     // scrollable chain (chips + "+" button)
 static lv_obj_t *s_fx_swatch, *s_fx_title, *s_fx_subtitle;
-static lv_obj_t *s_model_row;
+static lv_obj_t *s_model_row, *s_amp_status;
 static lv_obj_t *s_knob_row;
 static lv_obj_t *s_curve_col, *s_curve_caption;
 static lv_obj_t *s_preset_label, *s_edited_badge;
 static lv_obj_t *s_wifi_dot, *s_ble_dot;
-static lv_obj_t *s_meter_in, *s_meter_out;
+static lv_obj_t *s_meter_in, *s_meter_out, *s_meter_mock;
 static lv_obj_t *s_master_slider, *s_master_value;
 static lv_obj_t *s_mute_btn, *s_mute_label;
 static lv_obj_t *s_settings_backdrop, *s_backlight_slider, *s_backlight_value;
@@ -63,8 +62,10 @@ static void update_cab_curve(void);
 #define NVS_NS        "ui"
 #define NVS_KEY_RIG   "rig"
 #define NVS_KEY_SET   "settings"
-#define RIG_MAGIC     0x46585331u  // "FXS1"
+#define RIG_MAGIC_V1  0x46585331u  // "FXS1": before SD amp profiles
+#define RIG_MAGIC     0x46585332u  // "FXS2": adds the SD amp profile reference
 
+// Version 1 layout, kept only to migrate rigs saved by older firmware.
 typedef struct {
     uint32_t magic;
     uint8_t chain_len;
@@ -74,6 +75,19 @@ typedef struct {
     int8_t knobs[UI_EFFECT_COUNT][UI_MAX_KNOBS];
     uint8_t master_volume;
     char preset_name[32];
+} saved_rig_v1_t;
+
+typedef struct {
+    uint32_t magic;
+    uint8_t chain_len;
+    uint8_t chain[UI_CHAIN_MAX];
+    uint8_t on[UI_EFFECT_COUNT];
+    uint8_t model[UI_EFFECT_COUNT];        // for the AMP: built-in index, used when amp_sd_hash is 0
+    int8_t knobs[UI_EFFECT_COUNT][UI_MAX_KNOBS];
+    uint8_t master_volume;
+    char preset_name[32];
+    uint32_t amp_sd_hash;                  // SD amp profile (CRC32 of its weights), 0 = built-in
+    char amp_sd_name[32];                  // its name, to say which profile is missing if the card lacks it
 } saved_rig_t;
 
 typedef struct {
@@ -82,14 +96,21 @@ typedef struct {
 } saved_settings_t;
 
 static void save_rig(void) {
-    saved_rig_t r = { .magic = RIG_MAGIC, .chain_len = s_chain_len, .master_volume = (uint8_t)s_master_volume };
-    memcpy(r.chain, s_chain, sizeof(r.chain));
+    rig_full_t cur;
+    rig_get_full(&cur);
+    saved_rig_t r = { .magic = RIG_MAGIC, .chain_len = cur.r.chain_len, .master_volume = (uint8_t)cur.r.master_volume };
+    memcpy(r.chain, cur.r.chain, sizeof(r.chain));
     for (int fx = 0; fx < UI_EFFECT_COUNT; fx++) {
-        r.on[fx] = s_effect_on[fx];
-        r.model[fx] = s_model[fx];
-        for (int k = 0; k < UI_MAX_KNOBS; k++) r.knobs[fx][k] = (int8_t)g_knob_values[fx][k];
+        r.on[fx] = cur.r.on[fx];
+        r.model[fx] = cur.r.model[fx];
+        for (int k = 0; k < UI_MAX_KNOBS; k++) r.knobs[fx][k] = (int8_t)cur.knobs[fx][k];
     }
     strlcpy(r.preset_name, s_preset_name, sizeof(r.preset_name));
+    r.amp_sd_hash = cur.r.amp_sd_hash;
+    amp_model_t am;
+    if (r.amp_sd_hash && amp_models_get(amp_models_find_sd(r.amp_sd_hash), &am)) {
+        strlcpy(r.amp_sd_name, am.name, sizeof(r.amp_sd_name));
+    }
 
     nvs_handle_t h;
     esp_err_t err = nvs_open(NVS_NS, NVS_READWRITE, &h);
@@ -109,7 +130,8 @@ static bool rig_is_valid(const saved_rig_t *r) {
         seen |= 1u << r->chain[i];
     }
     for (int fx = 0; fx < UI_EFFECT_COUNT; fx++) {
-        if (g_effects[fx].model_count ? r->model[fx] >= g_effects[fx].model_count : r->model[fx] != 0) return false;
+        const int models = fx == FX_AMP ? amp_models_builtin_count() : g_effects[fx].model_count;
+        if (models ? r->model[fx] >= models : r->model[fx] != 0) return false;
         for (int k = 0; k < UI_MAX_KNOBS; k++) if (r->knobs[fx][k] < 0 || r->knobs[fx][k] > 100) return false;
     }
     return r->master_volume <= 100;
@@ -119,20 +141,34 @@ static void load_saved_state(void) {
     nvs_handle_t h;
     if (nvs_open(NVS_NS, NVS_READONLY, &h) != ESP_OK) return; // nothing saved yet
 
-    saved_rig_t r;
+    saved_rig_t r = { 0 };
     size_t len = sizeof(r);
-    if (nvs_get_blob(h, NVS_KEY_RIG, &r, &len) == ESP_OK && len == sizeof(r) && rig_is_valid(&r)) {
-        s_chain_len = r.chain_len;
-        memcpy(s_chain, r.chain, sizeof(s_chain));
+    esp_err_t err = nvs_get_blob(h, NVS_KEY_RIG, &r, &len);
+    if (err == ESP_OK && len == sizeof(saved_rig_v1_t) && r.magic == RIG_MAGIC_V1) {
+        // Older firmware listed four amps (Twin, AC30, Plexi, Mesa); the Seed has three
+        // (Twin65, AC30, JCM800 G5). Plexi and Mesa both become the JCM800 G5.
+        saved_rig_v1_t v1;
+        memcpy(&v1, &r, sizeof(v1));
+        memset(&r, 0, sizeof(r));
+        memcpy(&r, &v1, sizeof(v1)); // same leading layout
+        r.magic = RIG_MAGIC;
+        if (r.model[FX_AMP] > 2) r.model[FX_AMP] = 2;
+        len = sizeof(r);
+        ESP_LOGI(TAG, "migrated saved rig from v1");
+    }
+    if (err == ESP_OK && len == sizeof(r) && rig_is_valid(&r)) {
+        rig_full_t full = { .r = { .chain_len = r.chain_len, .master_volume = r.master_volume,
+                                   .amp_sd_hash = r.amp_sd_hash } };
+        memcpy(full.r.chain, r.chain, sizeof(full.r.chain));
         for (int fx = 0; fx < UI_EFFECT_COUNT; fx++) {
-            s_effect_on[fx] = r.on[fx] || fx == FX_CAB;
-            s_model[fx] = r.model[fx];
-            for (int k = 0; k < UI_MAX_KNOBS; k++) g_knob_values[fx][k] = r.knobs[fx][k];
+            full.r.on[fx] = r.on[fx] || fx == FX_CAB;
+            full.r.model[fx] = r.model[fx];
+            for (int k = 0; k < UI_MAX_KNOBS; k++) full.knobs[fx][k] = r.knobs[fx][k];
         }
-        s_master_volume = r.master_volume;
+        rig_replace(&full, RIG_SRC_BOOT);
         r.preset_name[sizeof(r.preset_name) - 1] = '\0';
         strlcpy(s_preset_name, r.preset_name, sizeof(s_preset_name));
-        s_selected_fx = s_chain[0];
+        s_selected_fx = rig()->chain[0];
         ESP_LOGI(TAG, "restored saved rig \"%s\"", s_preset_name);
     }
 
@@ -273,7 +309,7 @@ static void style_slider(lv_obj_t *s) {
 
 static void refresh_all_chip_styles(void) {
     for (uint8_t fx = 0; fx < UI_EFFECT_COUNT; fx++) {
-        if (s_chips[fx]) ui_effect_chip_refresh(s_chips[fx], s_effect_on[fx], s_selected_fx == fx);
+        if (s_chips[fx]) ui_effect_chip_refresh(s_chips[fx], rig()->on[fx], s_selected_fx == fx);
     }
 }
 
@@ -307,22 +343,21 @@ void ui_main_on_chip_tapped(uint8_t fx_index) {
         return;
     }
     // Already the open chip: second tap bypasses, third tap re-enables, and so on.
-    s_effect_on[fx_index] = !s_effect_on[fx_index];
+    rig_set_fx_on(fx_index, !rig()->on[fx_index], RIG_SRC_UI);
     refresh_all_chip_styles();
     ui_main_mark_dirty();
-    // TODO: tell the audio engine this effect is now on/bypassed in the signal path.
 }
 
 void ui_main_on_chip_reordered(lv_obj_t *rail) {
+    uint8_t chain[UI_CHAIN_MAX];
     uint8_t n = 0;
     uint32_t cnt = lv_obj_get_child_cnt(rail);
     for (uint32_t i = 0; i < cnt && n < UI_CHAIN_MAX; i++) {
         lv_obj_t *c = lv_obj_get_child(rail, i);
-        if (lv_obj_has_flag(c, UI_CHIP_FLAG)) s_chain[n++] = (uint8_t)(uintptr_t)lv_obj_get_user_data(c);
+        if (lv_obj_has_flag(c, UI_CHIP_FLAG)) chain[n++] = (uint8_t)(uintptr_t)lv_obj_get_user_data(c);
     }
-    s_chain_len = n;
-    ui_main_mark_dirty();
-    // TODO: tell the audio engine the new processing order (s_chain[0..s_chain_len-1], then CAB).
+    // A drop at the chip's own slot is not a change.
+    if (rig_set_chain(chain, n, RIG_SRC_UI)) ui_main_mark_dirty();
 }
 
 void ui_main_on_knob_tapped(uint8_t fx_index, uint8_t knob_index) {
@@ -335,23 +370,25 @@ void ui_main_on_knob_changed(uint8_t fx_index, uint8_t knob_index) {
         if (fx_index == FX_CAB) update_cab_curve();
     }
     ui_main_mark_dirty();
-    // TODO: send the new parameter value to the audio engine.
 }
 
+// Loads a preset as one change: the Seed gets exactly one snapshot for it.
 static void apply_preset(const ui_preset_t *p) {
-    memcpy(s_chain, p->chain, sizeof(s_chain));
-    s_chain_len = p->chain_len;
+    rig_full_t full = { .r = { .chain_len = p->chain_len,
+                               .master_volume = rig()->master_volume, .muted = rig()->muted } };
+    memcpy(full.r.chain, p->chain, sizeof(full.r.chain));
     for (int fx = 0; fx < UI_EFFECT_COUNT; fx++) {
-        s_effect_on[fx] = (p->on_mask & (1u << fx)) || fx == FX_CAB;
-        s_model[fx] = p->models[fx];
-        for (int k = 0; k < UI_MAX_KNOBS; k++) g_knob_values[fx][k] = g_default_knob_values[fx][k];
+        full.r.on[fx] = (p->on_mask & (1u << fx)) || fx == FX_CAB;
+        full.r.model[fx] = p->models[fx];
+        for (int k = 0; k < UI_MAX_KNOBS; k++) full.knobs[fx][k] = g_default_knob_values[fx][k];
     }
     for (int i = 0; i < p->knob_count; i++) {
-        for (int k = 0; k < UI_MAX_KNOBS; k++) g_knob_values[p->knobs[i].fx][k] = p->knobs[i].values[k];
+        for (int k = 0; k < UI_MAX_KNOBS; k++) full.knobs[p->knobs[i].fx][k] = p->knobs[i].values[k];
     }
+    rig_replace(&full, RIG_SRC_PRESET);
     strlcpy(s_preset_name, p->name, sizeof(s_preset_name));
     lv_label_set_text(s_preset_label, s_preset_name);
-    s_selected_fx = s_chain[0];
+    s_selected_fx = rig()->chain[0];
     set_dirty(false);
     rebuild_rail();
     rebuild_panel();
@@ -432,7 +469,8 @@ static void catalog_open_cb(lv_event_t *e);
 static void rebuild_rail(void) {
     for (int fx = 0; fx < FX_CAB; fx++) s_chips[fx] = NULL;
     lv_obj_clean(s_rail);
-    for (uint8_t i = 0; i < s_chain_len; i++) s_chips[s_chain[i]] = ui_effect_chip_create(s_rail, s_chain[i]);
+    const rig_t *r = rig();
+    for (uint8_t i = 0; i < r->chain_len; i++) s_chips[r->chain[i]] = ui_effect_chip_create(s_rail, r->chain[i]);
 
     lv_obj_t *plus = lv_button_create(s_rail);
     lv_obj_set_size(plus, 56, UI_CHIP_H);
@@ -494,65 +532,149 @@ static void build_chain_rail(lv_obj_t *screen) {
 static void update_cab_curve(void) {
     const ui_effect_def_t *def = &g_effects[FX_CAB];
     char cap[64];
-    int n = snprintf(cap, sizeof(cap), "FREQUENCY RESPONSE - %s", def->models[s_model[FX_CAB]].name);
+    const uint8_t model = rig()->model[FX_CAB];
+    int n = snprintf(cap, sizeof(cap), "FREQUENCY RESPONSE - %s", def->models[model].name);
     for (int i = 0; i < n && cap[i]; i++) cap[i] = (char)toupper((unsigned char)cap[i]);
     lv_label_set_text(s_curve_caption, cap);
-    ui_ir_curve_update(s_model[FX_CAB], g_knob_values[FX_CAB][0], g_knob_values[FX_CAB][1], def->color);
+    ui_ir_curve_update(model, g_knob_values[FX_CAB][0], g_knob_values[FX_CAB][1], def->color);
+}
+
+// Model cards. The AMP's list is the Seed's built-in amps plus SD amp profiles (amp_models.h);
+// every other effect's list is fixed in ui_effects_data.c.
+static uint32_t s_amp_cards_version;   // amp_models_version() the AMP cards were built from
+
+static int card_count(uint8_t fx) {
+    return fx == FX_AMP ? amp_models_count() : g_effects[fx].model_count;
+}
+
+// The card that shows as selected, or -1 (an SD profile that isn't on the card).
+static int selected_card(uint8_t fx) {
+    const rig_t *r = rig();
+    if (fx == FX_AMP && r->amp_sd_hash) return amp_models_find_sd(r->amp_sd_hash);
+    return r->model[fx];
+}
+
+static void restyle_model_cards(uint8_t fx) {
+    const lv_color_t color = g_effects[fx].color;
+    const int sel = selected_card(fx);
+    const uint32_t n = lv_obj_get_child_cnt(s_model_row);
+    for (uint32_t i = 0; i < n; i++) {
+        lv_obj_t *card = lv_obj_get_child(s_model_row, i);
+        lv_obj_set_style_border_color(card, (int)i == sel ? color : UI_COLOR_TRACK, 0);
+        lv_obj_set_style_text_color(lv_obj_get_child(card, 0), (int)i == sel ? color : UI_COLOR_TEXT, 0);
+    }
 }
 
 static void model_card_cb(lv_event_t *e) {
-    uint8_t m = (uint8_t)(uintptr_t)lv_event_get_user_data(e);
+    const int m = (int)(uintptr_t)lv_event_get_user_data(e);
     const uint8_t fx = s_selected_fx;
     const ui_effect_def_t *def = &g_effects[fx];
-    s_model[fx] = m;
-    for (int k = 0; k < def->knob_count; k++) g_knob_values[fx][k] = def->models[m].values[k];
+    if (fx == FX_AMP) {
+        amp_model_t am;
+        if (!amp_models_get(m, &am)) return;
+        if (am.builtin) {
+            // A built-in also loads its suggested knob positions, as the other effects' models do.
+            const int8_t *values = m < def->model_count ? def->models[m].values : NULL;
+            rig_set_model(fx, (uint8_t)m, values, RIG_SRC_UI);
+        } else {
+            rig_set_amp_sd(am.sd_hash, RIG_SRC_UI); // the link uploads it if the Seed lacks it
+        }
+    } else {
+        // The model and the knob values it brings go to the Seed as one change.
+        rig_set_model(fx, (uint8_t)m, def->models[m].values, RIG_SRC_UI);
+    }
 
     // Restyle in place rather than rebuild_panel(): that would delete the card whose CLICKED
     // event is still being dispatched.
-    for (uint8_t i = 0; i < def->model_count; i++) {
-        lv_obj_t *card = lv_obj_get_child(s_model_row, i);
-        lv_obj_set_style_border_color(card, i == m ? def->color : UI_COLOR_TRACK, 0);
-        lv_obj_set_style_text_color(lv_obj_get_child(card, 0), i == m ? def->color : UI_COLOR_TEXT, 0);
-    }
+    restyle_model_cards(fx);
     for (uint8_t k = 0; k < def->knob_count; k++) ui_knob_set_value(lv_obj_get_child(s_knob_row, k), g_knob_values[fx][k]);
     if (fx == FX_CAB) update_cab_curve();
     ui_main_mark_dirty();
-    // TODO: tell the audio engine to load this model (and the knob values it brings).
+}
+
+static void add_model_card(int index, const char *title, const char *desc, bool sel, lv_color_t color) {
+    lv_obj_t *card = lv_obj_create(s_model_row);
+    lv_obj_remove_style_all(card);
+    lv_obj_set_size(card, 196, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_color(card, UI_COLOR_CARD, 0);
+    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(card, 2, 0);
+    lv_obj_set_style_border_color(card, sel ? color : UI_COLOR_TRACK, 0);
+    lv_obj_set_style_radius(card, 11, 0);
+    lv_obj_set_style_pad_hor(card, 13, 0);
+    lv_obj_set_style_pad_ver(card, 10, 0);
+    lv_obj_set_style_pad_row(card, 3, 0);
+    lv_obj_set_style_bg_color(card, UI_COLOR_PRESSED, LV_STATE_PRESSED);
+    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+    lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(card, model_card_cb, LV_EVENT_CLICKED, (void *)(uintptr_t)index);
+
+    lv_obj_t *name = make_label(card, title, &lv_font_montserrat_14, sel ? color : UI_COLOR_TEXT);
+    lv_obj_set_width(name, LV_PCT(100));
+    lv_label_set_long_mode(name, LV_LABEL_LONG_DOT);
+    lv_obj_t *d = make_label(card, desc, &lv_font_montserrat_12, UI_COLOR_TEXT_MUTED);
+    lv_obj_set_width(d, LV_PCT(100));
+    lv_label_set_long_mode(d, LV_LABEL_LONG_WRAP);
 }
 
 static void build_model_cards(const ui_effect_def_t *def) {
     lv_obj_clean(s_model_row);
+    const uint8_t fx = s_selected_fx;
     if (!def->models) {
         lv_obj_add_flag(s_model_row, LV_OBJ_FLAG_HIDDEN);
         return;
     }
     lv_obj_clear_flag(s_model_row, LV_OBJ_FLAG_HIDDEN);
-    for (uint8_t m = 0; m < def->model_count; m++) {
-        const bool sel = s_model[s_selected_fx] == m;
-        lv_obj_t *card = lv_obj_create(s_model_row);
-        lv_obj_remove_style_all(card);
-        lv_obj_set_size(card, 196, LV_SIZE_CONTENT);
-        lv_obj_set_style_bg_color(card, UI_COLOR_CARD, 0);
-        lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
-        lv_obj_set_style_border_width(card, 2, 0);
-        lv_obj_set_style_border_color(card, sel ? def->color : UI_COLOR_TRACK, 0);
-        lv_obj_set_style_radius(card, 11, 0);
-        lv_obj_set_style_pad_hor(card, 13, 0);
-        lv_obj_set_style_pad_ver(card, 10, 0);
-        lv_obj_set_style_pad_row(card, 3, 0);
-        lv_obj_set_style_bg_color(card, UI_COLOR_PRESSED, LV_STATE_PRESSED);
-        lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
-        lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_add_event_cb(card, model_card_cb, LV_EVENT_CLICKED, (void *)(uintptr_t)m);
-
-        lv_obj_t *name = make_label(card, def->models[m].name, &lv_font_montserrat_14, sel ? def->color : UI_COLOR_TEXT);
-        lv_obj_set_width(name, LV_PCT(100));
-        lv_label_set_long_mode(name, LV_LABEL_LONG_DOT);
-        lv_obj_t *desc = make_label(card, def->models[m].desc, &lv_font_montserrat_12, UI_COLOR_TEXT_MUTED);
-        lv_obj_set_width(desc, LV_PCT(100));
-        lv_label_set_long_mode(desc, LV_LABEL_LONG_WRAP);
+    const int sel = selected_card(fx);
+    const int n = card_count(fx);
+    for (int m = 0; m < n; m++) {
+        if (fx == FX_AMP) {
+            amp_model_t am;
+            if (!amp_models_get(m, &am)) break;
+            add_model_card(m, am.name, am.desc, m == sel, def->color);
+        } else {
+            add_model_card(m, def->models[m].name, def->models[m].desc, m == sel, def->color);
+        }
     }
+    if (fx == FX_AMP) s_amp_cards_version = amp_models_version();
+}
+
+// One line under the AMP cards saying what the Seed is actually running. Only real link data:
+// no link means "not connected", never a guess.
+static void amp_status_text(char *buf, size_t len) {
+    seed_link_stats_t s;
+    seed_link_get_stats(&s);
+    const rig_t *r = rig();
+    const char *mock = s.peer_mock ? " (MOCK Seed)" : "";
+    if (!s.connected) {
+        snprintf(buf, len, "Seed not connected: the amp is applied when it connects.");
+        return;
+    }
+    if (r->amp_sd_hash && amp_models_find_sd(r->amp_sd_hash) < 0) {
+        snprintf(buf, len, "This rig's SD amp profile (%08lx) is not on the card.", (unsigned long)r->amp_sd_hash);
+        return;
+    }
+    if (s.status_flags & SLP_STATUS_MODEL_FAILED) {
+        snprintf(buf, len, "The Seed failed to load this model%s.", mock);
+        return;
+    }
+    if (!r->on[FX_AMP]) {
+        snprintf(buf, len, "Amp bypassed: no model in the signal path%s.", mock);
+        return;
+    }
+    amp_model_t am;
+    const bool running = r->amp_sd_hash
+        ? (s.active_kind == SLP_MODEL_UPLOADED && s.active_hash == r->amp_sd_hash)
+        : (amp_models_get(r->model[FX_AMP], &am) && s.active_kind == SLP_MODEL_BUILTIN && s.active_builtin == am.builtin_id);
+    snprintf(buf, len, running ? "Running on the Seed%s." : "Switching model on the Seed%s...", mock);
+}
+
+static void refresh_amp_status(void) {
+    if (s_selected_fx != FX_AMP) return;
+    char text[96];
+    amp_status_text(text, sizeof(text));
+    if (strcmp(lv_label_get_text(s_amp_status), text) != 0) lv_label_set_text(s_amp_status, text);
 }
 
 static void rebuild_panel(void) {
@@ -568,6 +690,12 @@ static void rebuild_panel(void) {
     }
 
     build_model_cards(def);
+    if (s_selected_fx == FX_AMP) {
+        lv_obj_clear_flag(s_amp_status, LV_OBJ_FLAG_HIDDEN);
+        refresh_amp_status();
+    } else {
+        lv_obj_add_flag(s_amp_status, LV_OBJ_FLAG_HIDDEN);
+    }
 
     lv_obj_clean(s_knob_row);
     const bool is_cab = s_selected_fx == FX_CAB;
@@ -582,7 +710,8 @@ static void rebuild_panel(void) {
     }
 }
 
-// Level meters show real SEED3 peaks only; with no link they stay empty (no fake levels).
+// Level meters show SEED3 peaks only; with no link (or no recent METERS) they stay empty, and
+// levels simulated by the mock Seed are tagged MOCK. Never invented levels.
 #define METER_H 180
 static int32_t meter_px(float dbfs) {
     if (dbfs <= -60.0f) return 0;
@@ -592,10 +721,19 @@ static int32_t meter_px(float dbfs) {
 
 static void meter_timer_cb(lv_timer_t *t) {
     (void)t;
+    amp_models_sync_from_seed();
+    if (s_selected_fx == FX_AMP) {
+        if (amp_models_version() != s_amp_cards_version) build_model_cards(&g_effects[FX_AMP]);
+        refresh_amp_status();
+    }
     seed_link_stats_t s;
     seed_link_get_stats(&s);
-    int32_t in = s.connected ? meter_px(s.input_peak_dbfs) : 0;
-    int32_t out = s.connected ? meter_px(s.output_peak_dbfs) : 0;
+    const bool live = s.connected && s.meters_valid;
+    int32_t in = live ? meter_px(s.input_peak_dbfs) : 0;
+    int32_t out = live ? meter_px(s.output_peak_dbfs) : 0;
+    const bool mock_shown = !lv_obj_has_flag(s_meter_mock, LV_OBJ_FLAG_HIDDEN);
+    if (live && s.peer_mock && !mock_shown) lv_obj_clear_flag(s_meter_mock, LV_OBJ_FLAG_HIDDEN);
+    else if (!(live && s.peer_mock) && mock_shown) lv_obj_add_flag(s_meter_mock, LV_OBJ_FLAG_HIDDEN);
     if (lv_obj_get_height(s_meter_in) != in) lv_obj_set_height(s_meter_in, in);
     if (lv_obj_get_height(s_meter_out) != out) {
         lv_obj_set_height(s_meter_out, out);
@@ -662,6 +800,8 @@ static void build_fx_panel(lv_obj_t *screen) {
     lv_obj_set_style_pad_column(s_model_row, 10, 0);
     lv_obj_set_scroll_dir(s_model_row, LV_DIR_HOR);
     lv_obj_set_scrollbar_mode(s_model_row, LV_SCROLLBAR_MODE_OFF);
+    s_amp_status = make_label(main, "", &lv_font_montserrat_12, UI_COLOR_TEXT_MUTED);
+    lv_obj_add_flag(s_amp_status, LV_OBJ_FLAG_HIDDEN);
 
     lv_obj_t *knob_area = make_row(main, 24);
     lv_obj_set_width(knob_area, LV_PCT(100));
@@ -701,6 +841,8 @@ static void build_fx_panel(lv_obj_t *screen) {
     lv_obj_t *names = make_row(meters, 8);
     make_label(names, "IN", &lv_font_montserrat_12, UI_COLOR_TEXT_MUTED);
     make_label(names, "OUT", &lv_font_montserrat_12, UI_COLOR_TEXT_MUTED);
+    s_meter_mock = make_label(meters, "MOCK", &lv_font_montserrat_12, UI_COLOR_WARN);
+    lv_obj_add_flag(s_meter_mock, LV_OBJ_FLAG_HIDDEN);
     lv_timer_create(meter_timer_cb, 50, NULL);
 
     rebuild_panel();
@@ -713,28 +855,28 @@ static void presets_btn_cb(lv_event_t *e) { (void)e; lv_obj_clear_flag(s_drawer_
 static void settings_btn_cb(lv_event_t *e) { (void)e; lv_obj_clear_flag(s_settings_backdrop, LV_OBJ_FLAG_HIDDEN); }
 
 static void refresh_master(void) {
-    int32_t shown = s_muted ? 0 : s_master_volume;
+    const bool muted = rig()->muted;
+    int32_t shown = muted ? 0 : rig()->master_volume;
     lv_label_set_text_fmt(s_master_value, "%d%%", (int)shown);
-    lv_obj_set_style_bg_color(s_mute_btn, s_muted ? UI_COLOR_MUTE : UI_COLOR_CARD, 0);
-    lv_obj_set_style_border_color(s_mute_btn, s_muted ? UI_COLOR_MUTE : UI_COLOR_BORDER, 0);
-    lv_obj_set_style_text_color(s_mute_label, s_muted ? UI_COLOR_ON_ACCENT : UI_COLOR_TEXT, 0);
+    lv_obj_set_style_bg_color(s_mute_btn, muted ? UI_COLOR_MUTE : UI_COLOR_CARD, 0);
+    lv_obj_set_style_border_color(s_mute_btn, muted ? UI_COLOR_MUTE : UI_COLOR_BORDER, 0);
+    lv_obj_set_style_text_color(s_mute_label, muted ? UI_COLOR_ON_ACCENT : UI_COLOR_TEXT, 0);
 }
 
 static void master_slider_cb(lv_event_t *e) {
     (void)e;
-    s_master_volume = lv_slider_get_value(s_master_slider);
-    s_muted = false;
+    rig_set_master_volume(lv_slider_get_value(s_master_slider), RIG_SRC_UI);
+    rig_set_muted(false, RIG_SRC_UI);
     refresh_master();
-    // TODO: apply s_master_volume to the real output gain stage.
 }
 
 static void mute_btn_cb(lv_event_t *e) {
     (void)e;
-    s_muted = !s_muted;
-    lv_slider_set_value(s_master_slider, s_muted ? 0 : s_master_volume, LV_ANIM_ON);
+    // Mute leaves the master volume untouched, so un-muting restores the same level.
+    const bool muted = !rig()->muted;
+    rig_set_muted(muted, RIG_SRC_UI);
+    lv_slider_set_value(s_master_slider, muted ? 0 : rig()->master_volume, LV_ANIM_ON);
     refresh_master();
-    // TODO: hard-mute the real output stage; s_master_volume itself is left untouched
-    // so un-muting restores the same level.
 }
 
 static void build_bottom_bar(lv_obj_t *screen) {
@@ -761,7 +903,7 @@ static void build_bottom_bar(lv_obj_t *screen) {
     make_label(master, "MASTER", &lv_font_montserrat_12, UI_COLOR_TEXT_MUTED);
     s_master_slider = lv_slider_create(master);
     lv_slider_set_range(s_master_slider, 0, 100);
-    lv_slider_set_value(s_master_slider, s_master_volume, LV_ANIM_OFF);
+    lv_slider_set_value(s_master_slider, rig()->master_volume, LV_ANIM_OFF);
     lv_obj_set_height(s_master_slider, 10);
     lv_obj_set_flex_grow(s_master_slider, 1);
     style_slider(s_master_slider);
@@ -857,7 +999,6 @@ static void preset_cb(lv_event_t *e) {
     const ui_preset_t *p = &g_presets[(uintptr_t)lv_event_get_user_data(e)];
     lv_obj_add_flag(s_drawer_backdrop, LV_OBJ_FLAG_HIDDEN);
     apply_preset(p);
-    // TODO: push the whole preset to the audio engine.
 }
 
 static void test_mode_btn_cb(lv_event_t *e) {
@@ -979,24 +1120,27 @@ static void catalog_close_cb(lv_event_t *e) {
 
 static void catalog_toggle_cb(lv_event_t *e) {
     uint8_t fx = (uint8_t)(uintptr_t)lv_event_get_user_data(e);
+    uint8_t chain[UI_CHAIN_MAX];
+    uint8_t len = rig()->chain_len;
+    memcpy(chain, rig()->chain, sizeof(chain));
     int idx = -1;
-    for (int i = 0; i < s_chain_len; i++) if (s_chain[i] == fx) idx = i;
+    for (int i = 0; i < len; i++) if (chain[i] == fx) idx = i;
 
     if (idx >= 0) {
-        if (s_chain_len <= 1) return; // keep at least one effect in the chain
-        memmove(&s_chain[idx], &s_chain[idx + 1], (size_t)(s_chain_len - idx - 1));
-        s_chain_len--;
-        s_effect_on[fx] = false;
-        if (s_selected_fx == fx) s_selected_fx = s_chain[0];
+        if (len <= 1) return; // keep at least one effect in the chain
+        memmove(&chain[idx], &chain[idx + 1], (size_t)(len - idx - 1));
+        len--;
+        rig_set_fx_on(fx, false, RIG_SRC_UI);
+        if (s_selected_fx == fx) s_selected_fx = chain[0];
     } else {
-        if (s_chain_len >= UI_CHAIN_MAX) return;
-        s_chain[s_chain_len++] = fx;
+        if (len >= UI_CHAIN_MAX) return;
+        chain[len++] = fx;
     }
+    rig_set_chain(chain, len, RIG_SRC_UI);
     rebuild_rail();
     rebuild_panel();
     refresh_catalog();
     ui_main_mark_dirty();
-    // TODO: tell the audio engine the chain changed.
 }
 
 static void build_catalog(lv_obj_t *screen) {
@@ -1085,6 +1229,8 @@ static void init_theme(void) {
 
 void ui_main_init(void) {
     init_theme();
+    amp_models_init();
+    rig_init();
     load_saved_state();
 
     lv_obj_t *screen = lv_obj_create(NULL);

@@ -8,7 +8,10 @@
 #define EXIO_BL_EN    2
 #define EXIO_LCD_RST  3
 #define EXIO_SD_CS    4
-#define EXIO_USB_CAN  5
+#define EXIO_USB_CAN  5   // USB_SEL: low = native USB to the "USB" Type-C port, high = CAN
+#define EXIO_LCD_VDD  6
+
+// Thread-safe: every call holds the driver's mutex for the duration of its I2C transfer.
 
 esp_err_t io_expander_init(i2c_master_bus_handle_t bus);
 esp_err_t io_expander_write(uint8_t pin, uint8_t level);

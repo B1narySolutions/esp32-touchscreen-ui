@@ -2,6 +2,7 @@
 #include "ui_effects_data.h"
 #include "ui_theme.h"
 #include "ui_main.h"
+#include "rig_state.h"
 
 static lv_obj_t *s_backdrop;
 static lv_obj_t *s_card;
@@ -13,7 +14,7 @@ static uint8_t s_target_knob;
 
 static void apply_value(int32_t value) {
     value = value < 0 ? 0 : (value > 100 ? 100 : value);
-    g_knob_values[s_target_fx][s_target_knob] = value;
+    rig_set_knob(s_target_fx, s_target_knob, value, RIG_SRC_UI);
     lv_label_set_text_fmt(s_value_label, "%d%%", (int)value);
     lv_slider_set_value(s_slider, value, LV_ANIM_OFF);
     ui_main_on_knob_changed(s_target_fx, s_target_knob);

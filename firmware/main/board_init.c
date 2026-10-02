@@ -217,7 +217,8 @@ float board_battery_volts(void) {
 esp_err_t board_check_expander(uint8_t *pins, bool *recovered) {
     // BL_EN is left out: that pin also carries the backlight PWM, so its read-back level follows
     // the PWM (always low at 100 % with the inverted duty), not the enable state.
-    const uint8_t mask = (1u << EXIO_TP_RST) | (1u << EXIO_LCD_RST);
+    // USB_SEL is checked too: if it flipped to CAN, the console port would vanish.
+    const uint8_t mask = (1u << EXIO_TP_RST) | (1u << EXIO_LCD_RST) | (1u << EXIO_USB_CAN);
     *recovered = false;
     esp_err_t err = io_expander_read_pins(pins);
     if (err != ESP_OK) return err;

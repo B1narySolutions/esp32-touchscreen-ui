@@ -15,11 +15,14 @@ static const ui_knob_def_t k_delay[]   = { {"time","TIME"}, {"feedback","FEEDBAC
 static const ui_knob_def_t k_reverb[]  = { {"decay","DECAY"}, {"predelay","PRE-DELAY"}, {"tone","TONE"}, {"mix","MIX"} };
 static const ui_knob_def_t k_cab[]     = { {"lowcut","LOW CUT"}, {"highcut","HIGH CUT"}, {"level","LEVEL"} };
 
+// The Seed's built-in NAM amps, in its AmpId order (realtime-nam-seed3/models/amps.json); the
+// Seed's HELLO supplies the live names when connected. Amp profiles imported from the SD card
+// are appended at run time (rig/amp_models.c). The values are the UI knob positions each model
+// loads; the amp's tone knobs are not implemented on the Seed yet (docs/SEED_LINK_PROTOCOL.md).
 static const ui_model_def_t m_amp[] = {
-    { "Fender '65 Twin Reverb", "Glassy clean headroom with built-in spring reverb character.", { 25, 55, 50, 60, 60 } },
-    { "Vox AC30",               "Chimey British top-boost with fast breakup.",                  { 45, 45, 60, 65, 62 } },
-    { "Marshall Plexi",         "Classic crunch that pushes into rock saturation.",             { 62, 55, 58, 68, 66 } },
-    { "Mesa Rectifier",         "High-gain modern voicing with a tight low end.",               { 82, 60, 35, 72, 70 } },
+    { "Fender Twin65",      "Fender Twin Reverb '65 reissue, clean headroom. NAM A2 capture.", { 25, 55, 50, 60, 60 } },
+    { "Vox AC30 Chimey",    "Vox AC30 Custom Classic, chimey top-boost breakup. NAM A2 capture.", { 45, 45, 60, 65, 62 } },
+    { "Marshall JCM800 G5", "Marshall JCM800 2203, classic rock crunch to lead. NAM A2 capture.", { 62, 55, 58, 68, 66 } },
 };
 static const ui_model_def_t m_drive[] = {
     { "Tube Screamer",  "Mid-forward overdrive with a smooth, compressed clip.", { 45, 60, 60 } },
@@ -170,7 +173,7 @@ const ui_preset_t g_presets[UI_PRESET_COUNT] = {
       { FX_GATE, FX_COMP, FX_DRIVE, FX_AMP, FX_DELAY, FX_CHORUS, FX_REVERB }, 7,
       BIT(FX_GATE) | BIT(FX_COMP) | BIT(FX_DRIVE) | BIT(FX_AMP) | BIT(FX_DELAY) | BIT(FX_REVERB),
       p_lead, N(p_lead),
-      { [FX_DRIVE] = 2, [FX_AMP] = 3, [FX_DELAY] = 0, [FX_REVERB] = 0, [FX_CAB] = 3 } },
+      { [FX_DRIVE] = 2, [FX_AMP] = 2, [FX_DELAY] = 0, [FX_REVERB] = 0, [FX_CAB] = 3 } },
     { "Ambient Wash", "Spacious pads and long tails",
       { FX_GATE, FX_COMP, FX_AMP, FX_CHORUS, FX_DRIVE, FX_DELAY, FX_REVERB }, 7,
       BIT(FX_COMP) | BIT(FX_AMP) | BIT(FX_CHORUS) | BIT(FX_DELAY) | BIT(FX_REVERB),
@@ -180,7 +183,7 @@ const ui_preset_t g_presets[UI_PRESET_COUNT] = {
       { FX_GATE, FX_COMP, FX_DRIVE, FX_AMP, FX_EQ, FX_CHORUS, FX_DELAY, FX_REVERB }, 8,
       BIT(FX_GATE) | BIT(FX_COMP) | BIT(FX_DRIVE) | BIT(FX_AMP) | BIT(FX_EQ),
       p_metal, N(p_metal),
-      { [FX_DRIVE] = 3, [FX_AMP] = 3, [FX_CAB] = 3 } },
+      { [FX_DRIVE] = 3, [FX_AMP] = 2, [FX_CAB] = 3 } },
 };
 
 const ui_ir_shape_t g_ir_shapes[] = {

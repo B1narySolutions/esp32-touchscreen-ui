@@ -51,3 +51,12 @@ CONFIG_FREERTOS_RUN_TIME_STATS_USING_ESP_TIMER=y
 # DMA every VSYNC so a late refill can't leave a permanent offset.
 CONFIG_LCD_RGB_ISR_IRAM_SAFE=y
 CONFIG_LCD_RGB_RESTART_IN_VSYNC=y
+
+# Console and the DIAG line on the native USB port (Type-C "USB", USB Serial/JTAG), which frees
+# UART0 (GPIO43/44) for the Seed link. Needs EXIO5 (USB_SEL) low, see io_expander.c.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+
+# Seed link UART: keep its interrupt handler in IRAM so receiving survives the PSRAM bus
+# contention from the RGB refills (the same reason the LCD ISR is IRAM-safe above).
+CONFIG_UART_ISR_IN_IRAM=y

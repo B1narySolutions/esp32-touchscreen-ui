@@ -14,6 +14,7 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/idf_additions.h"
 
 static const char *TAG = "diag";
 
@@ -298,7 +299,8 @@ static void stream_task(void *arg) {
                "\"inv_kpx\":%lu,\"tap\":%.1f},"
                "\"seed\":{\"conn\":%s,\"tx\":%lu,\"rx\":%lu,\"err\":%lu,\"rtt\":%.2f,"
                "\"fw\":\"%s\",\"sr\":%lu,\"blk\":%u,\"cpu\":%.1f,\"nam\":\"%s\","
-               "\"inpk\":%.1f,\"outpk\":%.1f,\"clips\":%lu}}\n",
+               "\"inpk\":%.1f,\"outpk\":%.1f,\"clips\":%lu,"
+               "\"mock\":%s,\"metv\":%s,\"ovr\":%lu,\"snaps\":%lu,\"snap_ok\":%u,\"dovr\":%lu}}\n",
                (unsigned long)d.uptime_s, d.reset_reason, esp_get_idf_version(), d.fw_version, d.fw_elf,
                cpu0, cpu1,
                (unsigned long)d.heap_free, (unsigned long)d.heap_min_free,
@@ -314,7 +316,10 @@ static void stream_task(void *arg) {
                s.connected ? "true" : "false", (unsigned long)s.packets_tx,
                (unsigned long)s.packets_rx, (unsigned long)s.link_errors, s.rtt_ms,
                s.dsp_fw_version, (unsigned long)s.sample_rate_hz, s.block_size, s.dsp_cpu_pct,
-               s.nam_model, s.input_peak_dbfs, s.output_peak_dbfs, (unsigned long)s.clip_count);
+               s.nam_model, s.input_peak_dbfs, s.output_peak_dbfs, (unsigned long)s.clip_count,
+               s.peer_mock ? "true" : "false", s.meters_valid ? "true" : "false",
+               (unsigned long)s.uart_overruns, (unsigned long)s.snapshots_sent, s.snapshot_applied,
+               (unsigned long)s.dsp_overruns);
     }
 }
 
@@ -324,5 +329,7 @@ void diag_start_serial_stream(void) {
     portENTER_CRITICAL(&s_snap_mux);
     s_snap = d;
     portEXIT_CRITICAL(&s_snap_mux);
-    xTaskCreate(stream_task, "diag_stream", 6144, NULL, 1, NULL); // printf of floats is stack-hungry
+    // printf of floats is stack-hungry; the stack lives in PSRAM because internal RAM is tight
+    // and this task never writes flash or needs to run with the cache disabled.
+    xTaskCreatePinnedToCoreWithCaps(stream_task, "diag_stream", 6144, NULL, 1, NULL, tskNO_AFFINITY, MALLOC_CAP_SPIRAM);
 }
