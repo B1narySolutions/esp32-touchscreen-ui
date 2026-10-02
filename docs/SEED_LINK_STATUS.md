@@ -15,6 +15,7 @@ drop-in receiver code, `slp_receiver.c`).
 | Internal RAM | heap_min about 49 KB (baseline 58.7 KB). The IRAM UART ISR (required for RX during PSRAM contention) costs ~5 KB; everything else new lives in PSRAM. |
 | rig_state | Every UI action routed through it; one log line per change burst; UI behaviour unchanged. |
 | Saved rig migration | v1 rig from older firmware migrated and restored on the board (Plexi/Mesa to JCM800 G5). |
+| Touch latency with the link and knobs running | 165.4 ms average tap-to-frame over 25 effect-box taps (baseline 164.6 ms over 23: +0.5 %, limit 10 %); worst 200 ms (baseline 393 ms). |
 | Physical pot on GPIO6 | Master volume follows over the full range; median filter rejects contact dropouts; idle pot causes no changes. |
 | I2C scan at boot | 0x24 IO expander, 0x5D GT911 (no encoders fitted yet). |
 | microSD | FAT32/MBR card mounts; no card and wrong format are reported, never formatted. |
@@ -52,7 +53,6 @@ drop-in receiver code, `slp_receiver.c`).
 - **STEMMA QT encoders**: driver written (seesaw registers per Adafruit's library), untested;
   rotation direction and the 1 ms read delay need checking on hardware. Touch latency with
   knobs fitted not measured (the pot doesn't use I2C).
-- Tap-to-frame latency comparison needs ~20 chip taps (only 6 so far).
 - Web Serial preview reading `DIAG` over the native USB port (should work: it's a CDC port).
 - SD card hot-swap: the card is scanned at boot and by "Rescan SD card"; there is no card-detect pin.
 
@@ -68,7 +68,8 @@ drop-in receiver code, `slp_receiver.c`).
   With flash and PSRAM at 80 MHz: 0 of 10 even when opened immediately, so the 120 MHz timing
   tuning (experimental in ESP-IDF) is the sensitive part. The repo's tools now wait 1.5 s after
   the port reappears. Watch for it with `idf.py flash monitor` and Web Serial reconnects; RESET
-  recovers it. Possible fix: 80 MHz PSRAM, but that costs PSRAM bandwidth, which the display
-  depends on, so it needs a display soak with someone watching before adopting it.
+  recovers it. 80 MHz was tried and **rejected**: the screen rippled under heavy redraws (and
+  the frames measured averaged 118 ms against ~35 ms at 120 MHz). The 120 MHz setting stays; the
+  rule is "don't open the native USB port within ~1.5 s of a reset".
 - A rescan while an upload is running can fail that upload once (it retries after 5 s).
 - Chip taps rebuild the whole effect panel (90-390 ms tap-to-frame, same as before this work).

@@ -121,13 +121,14 @@ Its Web Serial Test Mode still parses the `DIAG` line; the new fields are additi
 ## Next steps
 
 1. Lab day with the Seed: LAB_DAY_CHECKLIST.md (the Seed owner integrates the receiver first).
-2. Encoders: wire them, enable `CONFIG_KNOBS_ENCODERS`, check direction, measure tap latency.
+2. Encoders: wire them, enable `CONFIG_KNOBS_ENCODERS`, check direction and the push buttons,
+   then repeat the 25-tap latency test (165 ms average without encoders).
 3. Make chip taps cheaper (restyle instead of rebuilding the panel when the layout is the same).
 4. Optional: preset export to SD, bringing the preview up to date (see "Preview drift" below).
 
 Don't open the native USB port within ~1.5 s of a reset: at 120 MHz flash/PSRAM that stops
 startup at "Enter psram timing tuning" (RESET recovers it; `capture_log.py` waits for you).
-80 MHz cures it but needs a display soak first. Details in SEED_LINK_STATUS.md.
+80 MHz cures it but makes the screen ripple (tried, rejected). Details in SEED_LINK_STATUS.md.
 
 ## Working conventions
 
