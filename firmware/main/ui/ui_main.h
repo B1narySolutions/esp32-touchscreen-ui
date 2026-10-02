@@ -15,3 +15,6 @@ void ui_main_mark_dirty(void);
 // The slider popup changed g_knob_values[fx_index][knob_index]: refresh that knob (and the CAB
 // curve) on screen if visible, and mark the preset edited.
 void ui_main_on_knob_changed(uint8_t fx_index, uint8_t knob_index);
+
+// The effect whose panel is open (FX_* index). Safe to read from any task.
+uint8_t ui_main_selected_fx(void);

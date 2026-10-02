@@ -54,6 +54,7 @@ static lv_obj_t *s_catalog_pills[UI_CHAIN_MAX];
 static void rebuild_rail(void);
 static void rebuild_panel(void);
 static void update_cab_curve(void);
+static void apply_external_changes(void);
 
 // ---------------------------------------------------------------------------------------------
 // Persistence: SAVE writes the whole rig to NVS; it's restored at boot. Settings (backlight,
@@ -721,6 +722,7 @@ static int32_t meter_px(float dbfs) {
 
 static void meter_timer_cb(lv_timer_t *t) {
     (void)t;
+    apply_external_changes();
     amp_models_sync_from_seed();
     if (s_selected_fx == FX_AMP) {
         if (amp_models_version() != s_amp_cards_version) build_model_cards(&g_effects[FX_AMP]);
@@ -1199,6 +1201,48 @@ static void build_catalog(lv_obj_t *screen) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Following changes made elsewhere (physical knobs, SD loader)
+
+uint8_t ui_main_selected_fx(void) { return s_selected_fx; }
+
+// rig_state calls this from the knob (or SD) task after a change. It only records what changed:
+// touching LVGL from another task would mean taking the LVGL lock up to 50 times a second, which
+// starves the diag watchdog's lock probe (it then wrongly restarts the RGB scan-out). The LVGL
+// task applies the changes from meter_timer_cb instead.
+static uint32_t s_external_dirty;
+
+static void on_rig_external(uint32_t dirty, rig_src_t src) {
+    (void)src;
+    __atomic_fetch_or(&s_external_dirty, dirty, __ATOMIC_RELAXED);
+}
+
+// LVGL task only. Widgets are updated with LVGL's set-value calls, which emit no VALUE_CHANGED
+// events, so nothing echoes back into rig_state as a second change.
+static void apply_external_changes(void) {
+    const uint32_t dirty = __atomic_exchange_n(&s_external_dirty, 0, __ATOMIC_RELAXED);
+    if (!dirty) return;
+    if (dirty & RIG_DIRTY_MASTER) {
+        lv_slider_set_value(s_master_slider, rig()->muted ? 0 : rig()->master_volume, LV_ANIM_OFF);
+        refresh_master();
+    }
+    if (dirty & RIG_DIRTY_PARAMS) {
+        const uint8_t n = g_effects[s_selected_fx].knob_count;
+        for (uint8_t k = 0; k < n && k < lv_obj_get_child_cnt(s_knob_row); k++) {
+            ui_knob_set_value(lv_obj_get_child(s_knob_row, k), g_knob_values[s_selected_fx][k]);
+        }
+        if (s_selected_fx == FX_CAB) update_cab_curve();
+        ui_vertical_slider_refresh();
+    }
+    if (dirty & RIG_DIRTY_FX) {
+        refresh_all_chip_styles();
+        restyle_model_cards(s_selected_fx);
+    }
+    if (dirty & RIG_DIRTY_CHAIN) rebuild_rail();
+    // Master volume doesn't mark the rig EDITED on the touch path either.
+    if (dirty & (RIG_DIRTY_PARAMS | RIG_DIRTY_FX | RIG_DIRTY_CHAIN)) ui_main_mark_dirty();
+}
+
+// ---------------------------------------------------------------------------------------------
 // Theme + init
 
 static lv_style_t s_text_style;
@@ -1253,4 +1297,5 @@ void ui_main_init(void) {
     ui_test_mode_init(screen);
 
     lv_screen_load(screen);
+    rig_set_observer(on_rig_external);
 }

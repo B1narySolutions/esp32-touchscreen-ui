@@ -34,3 +34,33 @@ menu "Seed link (ESP32 <-> Daisy Seed3)"
             Must match the Seed (and tools/mock_seed.py --baud).
 
 endmenu
+
+menu "Physical knobs"
+
+    choice KNOBS_GPIO6
+        prompt "Use of GPIO6 (the \"GPIO\" header J8)"
+        default KNOBS_GPIO6_POT
+        help
+            GPIO6 is the board's only spare pin.
+
+        config KNOBS_GPIO6_POT
+            bool "10k linear pot as master volume (outer legs to 3V3 and GND, wiper to GP6)"
+        config KNOBS_GPIO6_ENCODER_INT
+            bool "INT line of the STEMMA QT encoders (read the bus only when they signal)"
+        config KNOBS_GPIO6_NONE
+            bool "Unused"
+    endchoice
+
+    config KNOBS_ENCODERS
+        bool "Adafruit STEMMA QT rotary encoders on the I2C header (0x36, 0x37)"
+        default n
+        help
+            Knob 1 (0x36): master volume, push = mute. Knob 2 (0x37): the open parameter,
+            push = bypass the selected effect. Untested until the hardware arrives.
+
+    config KNOBS_ENCODER_REVERSE
+        bool "Reverse encoder direction"
+        default n
+        depends on KNOBS_ENCODERS
+
+endmenu

@@ -80,7 +80,7 @@ def summarise(lines, skip_zero_tap=True):
     return "\n".join(rows)
 
 
-def capture(port, baud, seconds, reset, wait=0.0):
+def capture(port, baud, seconds, reset, wait=0.0, out=None):
     import serial  # pyserial; ships in the ESP-IDF python env
 
     # The native USB console port disappears while the chip resets; --wait keeps retrying.
@@ -112,9 +112,23 @@ def capture(port, baud, seconds, reset, wait=0.0):
         s.rts = False
     buf = bytearray()
     end = time.monotonic() + seconds
-    while time.monotonic() < end:
-        buf += s.read(4096)
-    s.close()
+    # Written as it arrives, so a capture stopped early (or killed) still leaves its log.
+    sink = None
+    if out:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        sink = open(out, "wb")
+    try:
+        while time.monotonic() < end:
+            chunk = s.read(4096)
+            if chunk:
+                buf += chunk
+                if sink:
+                    sink.write(chunk)
+                    sink.flush()
+    finally:
+        s.close()
+        if sink:
+            sink.close()
     return buf.decode("utf-8", errors="replace").splitlines()
 
 
@@ -133,10 +147,8 @@ def main():
         print(summarise(args.summarise.read_text(encoding="utf-8", errors="replace").splitlines()))
         return
 
-    lines = capture(args.port, args.baud, args.seconds, args.reset, args.wait)
+    lines = capture(args.port, args.baud, args.seconds, args.reset, args.wait, args.out)
     if args.out:
-        args.out.parent.mkdir(parents=True, exist_ok=True)
-        args.out.write_text("\n".join(lines) + "\n", encoding="utf-8")
         print(f"wrote {len(lines)} lines to {args.out}")
     print(summarise(lines))
 

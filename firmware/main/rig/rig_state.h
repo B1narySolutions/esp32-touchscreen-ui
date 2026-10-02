@@ -77,8 +77,8 @@ uint32_t rig_take_dirty(uint64_t *knob_mask);
 void rig_set_notify(void (*fn)(void));
 
 // Called after a change from a source outside the LVGL task (RIG_SRC_KNOB, RIG_SRC_SD), from
-// the caller's task, so the UI can follow; it must take the LVGL lock itself. Touch, preset
-// and boot changes are made by the UI, which updates its own widgets.
+// the caller's task, so the UI can follow. It must not block or call LVGL: record the change
+// and let the LVGL task apply it. Touch, preset and boot changes are made by the UI itself.
 typedef void (*rig_observer_t)(uint32_t dirty, rig_src_t src);
 void rig_set_observer(rig_observer_t cb);
 

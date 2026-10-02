@@ -11,6 +11,7 @@ static lv_obj_t *s_value_label;
 static lv_obj_t *s_slider;
 static uint8_t s_target_fx;
 static uint8_t s_target_knob;
+static volatile bool s_visible;
 
 static void apply_value(int32_t value) {
     value = value < 0 ? 0 : (value > 100 ? 100 : value);
@@ -152,8 +153,24 @@ void ui_vertical_slider_show(uint8_t fx_index, uint8_t knob_index) {
     lv_obj_set_style_border_color(s_slider, def->color, LV_PART_KNOB);
 
     lv_obj_clear_flag(s_backdrop, LV_OBJ_FLAG_HIDDEN);
+    s_visible = true;
 }
 
 void ui_vertical_slider_hide(void) {
     lv_obj_add_flag(s_backdrop, LV_OBJ_FLAG_HIDDEN);
+    s_visible = false;
+}
+
+bool ui_vertical_slider_target(uint8_t *fx_index, uint8_t *knob_index) {
+    if (!s_visible) return false;
+    *fx_index = s_target_fx;
+    *knob_index = s_target_knob;
+    return true;
+}
+
+void ui_vertical_slider_refresh(void) {
+    if (!s_visible) return;
+    const int32_t value = g_knob_values[s_target_fx][s_target_knob];
+    lv_label_set_text_fmt(s_value_label, "%d%%", (int)value);
+    lv_slider_set_value(s_slider, value, LV_ANIM_OFF); // emits no VALUE_CHANGED: no echo
 }

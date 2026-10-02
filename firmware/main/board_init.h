@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include "esp_err.h"
 #include "lvgl.h"
+#include "driver/i2c_master.h"
 
 #define BOARD_LCD_H_RES 1024
 #define BOARD_LCD_V_RES 600
@@ -11,6 +12,10 @@
 // backlight, and the LVGL display/touch via esp_lvgl_adapter. Returns the display.
 // After this returns, wrap any LVGL calls in board_lvgl_lock()/board_lvgl_unlock().
 lv_display_t *board_init(void);
+
+// The one I2C master bus on GPIO8/9 (GT911 touch, IO expander, and the H1 "I2C" header).
+// Add devices to it; never create a second bus on those pins.
+i2c_master_bus_handle_t board_i2c_bus(void);
 
 bool board_lvgl_lock(void);
 void board_lvgl_unlock(void);

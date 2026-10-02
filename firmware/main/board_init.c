@@ -185,6 +185,7 @@ lv_display_t *board_init(void) {
     return disp;
 }
 
+i2c_master_bus_handle_t board_i2c_bus(void) { return s_i2c_bus; }
 bool board_lvgl_lock(void) { return esp_lv_adapter_lock(-1) == ESP_OK; }
 bool board_lvgl_try_lock(int32_t timeout_ms) { return esp_lv_adapter_lock(timeout_ms) == ESP_OK; }
 esp_err_t board_restart_rgb(void) { return s_panel ? esp_lcd_rgb_panel_restart(s_panel) : ESP_ERR_INVALID_STATE; }

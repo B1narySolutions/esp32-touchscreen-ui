@@ -11,3 +11,9 @@ void ui_vertical_slider_init(lv_obj_t *screen);
 // while it's open.
 void ui_vertical_slider_show(uint8_t fx_index, uint8_t knob_index);
 void ui_vertical_slider_hide(void);
+
+// The parameter the popup is editing, for a physical knob to follow. Safe from any task (reads
+// two bytes and a flag the LVGL task keeps). Returns false while the popup is closed.
+bool ui_vertical_slider_target(uint8_t *fx_index, uint8_t *knob_index);
+// Re-reads the target's value after something other than the popup changed it (LVGL task only).
+void ui_vertical_slider_refresh(void);

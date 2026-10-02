@@ -9,6 +9,7 @@ idf_component_register(
         "seed_link_proto/slp_coalesce.c"
         "rig/rig_state.c"
         "rig/amp_models.c"
+        "knobs/knobs.c"
         "ui/ui_main.c"
         "ui/ui_effects_data.c"
         "ui/ui_effect_chip.c"
@@ -21,6 +22,7 @@ idf_component_register(
         "ui"
         "rig"
         "seed_link_proto"
+        "knobs"
 )
 
 # Fail the build if the wire parameter registry (tools/param_ids.json) and the knobs defined in
