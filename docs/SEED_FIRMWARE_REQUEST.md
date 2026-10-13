@@ -28,6 +28,20 @@ Nothing on H3 pin 1 (3V3). The touchscreen's switch SW1 goes to **UART2**. Link:
 
 ## What to add (phase 1: no model uploads yet)
 
+**Shortcut:** steps 2 and 3 below are also a ready patch, [seed3-link.patch](seed3-link.patch).
+From your repo root, after step 1:
+
+```sh
+git apply path/to/seed3-link.patch
+```
+
+It applies cleanly to your `main` at `230eb74` and is `clang-format` clean with your `.clang-format`.
+
+**Build check (2026-10-13):** your firmware plus this patch compiles and links against your pinned
+libDaisy `cc146d5` with Arm GNU Toolchain 15.3.rel2, with no new warnings (the 8 newlib
+"not implemented" linker warnings are there without it too). Flash: 103,428 B (78.9 %) before,
+111,636 B (85.2 %) after, so the link costs about 8.2 KB. **It has not run on a Seed yet.**
+
 ### 1. Copy five files
 
 From `esp32-touchscreen-ui/firmware/main/seed_link_proto/` into `src/link/`:
@@ -46,9 +60,8 @@ before the `include $(SYSTEM_FILES_DIR)/Makefile` line (libDaisy's core Makefile
 
 ### 3. `src/main.cpp`
 
-All names below were checked against your pinned libDaisy `cc146d5` (`per/uart.h`, `per/rng.h`,
-`daisy_seed.h`: `seed::D13` is PB6, `seed::D14` is PB7), but **this code has not been compiled**:
-nobody on the touchscreen side has the ARM toolchain set up yet.
+This is the code in the patch, in pieces (`seed::D13` is PB6, `seed::D14` is PB7 in your pinned
+libDaisy). Compiled, not yet run on hardware.
 
 **UART with DMA into a ring buffer** (the DMA callback only copies bytes):
 
@@ -110,7 +123,7 @@ RaisePeak(out_peak, out_max);
 **The receiver and its hooks** (hooks run in the main loop, inside `slp_rx_feed`):
 
 ```cpp
-static slp_receiver_t link;
+static slp_receiver_t link_rx;  // not "link": that name is taken by newlib's link()
 static const slp_builtin_t kBuiltins[] = {
     {1, "Fender Twin65"}, {2, "Vox AC30 Chimey"}, {3, "Marshall JCM800 G5"},  // AmpId order; better built from AmpName()
 };
@@ -169,7 +182,7 @@ static void InitLink() {
     cfg.on_select_model = OnSelectModel;
     cfg.on_fx = OnFx;
     cfg.on_link = OnLink;
-    slp_rx_init(&link, &cfg);
+    slp_rx_init(&link_rx, &cfg);
 }
 
 // Every main-loop pass: hand the received bytes to the receiver.
@@ -183,8 +196,8 @@ static void PollLink() {
     }
     ring_tail.store(tail, std::memory_order_release);
     if (n)
-        slp_rx_feed(&link, buf, n);
-    slp_rx_poll(&link);
+        slp_rx_feed(&link_rx, buf, n);
+    slp_rx_poll(&link_rx);
 }
 ```
 
@@ -202,15 +215,15 @@ st.overruns = state.total_overruns;                 // since boot, not per secon
 st.model_kind = bypass ? SLP_MODEL_BYPASS : SLP_MODEL_BUILTIN;
 st.builtin_id = bypass ? 0 : static_cast<uint8_t>(state.selected_amp);
 st.flags = SLP_STATUS_AUDIO_RUNNING | (bypass ? SLP_STATUS_BYPASS : 0) | (!bypass && !state.model_ready ? SLP_STATUS_MODEL_FAILED : 0);
-slp_rx_send_status(&link, &st);
+slp_rx_send_status(&link_rx, &st);
 
-// METERS every 33 ms. log10f pulls in some libm; say if flash is tight and we'll find a cheaper one.
+// METERS every 33 ms. (log10f measured at about 0.3 KB of flash.)
 auto centi_db = [](float x) { return x > 1e-6f ? static_cast<int16_t>(2000.0f * log10f(x)) : SLP_METER_SILENCE; };
 slp_meters_t m{};
 m.in_peak_cdb = centi_db(in_peak.exchange(0.0f));
 m.out_peak_cdb = centi_db(out_peak.exchange(0.0f));
 m.clip_count = clip_count.load();
-slp_rx_send_meters(&link, &m);
+slp_rx_send_meters(&link_rx, &m);
 ```
 
 `main()`: call `InitLink()` after `InitHardware()`, and `PollLink()` plus the telemetry timer in

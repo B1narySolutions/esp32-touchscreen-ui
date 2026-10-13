@@ -68,8 +68,9 @@ real firmware has been run against it on a PC serial port (tests/host/seed_sim.c
 
 The libDaisy calls below were checked name by name against your pinned libDaisy (`cc146d5`:
 `per/uart.h`, `daisy_seed.h`, `daisy_core.h`) on 2026-10-13, including `seed::D13` = PB6 and
-`seed::D14` = PB7 (USART1, AF7). **They have not been compiled yet**: the touchscreen team has no
-ARM toolchain set up.
+`seed::D14` = PB7 (USART1, AF7). A version of this code compiles and links against `cc146d5`
+(2026-10-13, Arm GNU 15.3.rel2): see [SEED_FIRMWARE_REQUEST.md](SEED_FIRMWARE_REQUEST.md) and its
+ready patch. Not yet run on a Seed.
 
 ```cpp
 #include "daisy_seed.h"
@@ -115,7 +116,7 @@ Main loop (your existing loop in `main.cpp` already runs `ApplyPendingAmpCommand
 `ReportStatus` here):
 
 ```cpp
-static slp_receiver_t link;
+static slp_receiver_t link_rx;  // not "link": that name is taken by newlib's link()
 
 static void LinkSend(void *, const uint8_t *bytes, size_t len) {
     link_uart.BlockingTransmit(const_cast<uint8_t *>(bytes), len); // at most ~270 bytes, ~3 ms
@@ -131,8 +132,8 @@ static void PollLink() {
         tail = (tail + 1) % sizeof(link_ring);
     }
     ring_tail.store(tail, std::memory_order_release);
-    if (n) slp_rx_feed(&link, buf, n);
-    slp_rx_poll(&link);
+    if (n) slp_rx_feed(&link_rx, buf, n);
+    slp_rx_poll(&link_rx);
 }
 ```
 
@@ -160,7 +161,7 @@ static void InitReceiver(uint32_t boot_id) {
     cfg.on_select_model = OnSelectModel;
     cfg.on_param = OnParam;              // optional until effects exist
     cfg.on_fx = OnFx;                    // includes amp on/bypass
-    slp_rx_init(&link, &cfg);
+    slp_rx_init(&link_rx, &cfg);
 }
 ```
 
@@ -196,14 +197,14 @@ st.model_kind = active_kind;                       // SLP_MODEL_*
 st.builtin_id = static_cast<uint8_t>(selected_amp);
 st.model_hash = active_uploaded_crc;               // for SLP_MODEL_UPLOADED, else 0
 st.flags = (bypass ? SLP_STATUS_BYPASS : 0) | (model_ready ? 0 : SLP_STATUS_MODEL_FAILED) | SLP_STATUS_AUDIO_RUNNING;
-slp_rx_send_status(&link, &st);                    // fills in applied_snapshot_id itself
+slp_rx_send_status(&link_rx, &st);                    // fills in applied_snapshot_id itself
 
 // About 30 times a second: peaks since the last call, collected in the audio callback.
 slp_meters_t m{};
 m.in_peak_cdb = PeakToCentiDb(in_peak.exchange(0.0f));   // -600 = -6.00 dBFS, -12000 = silence
 m.out_peak_cdb = PeakToCentiDb(out_peak.exchange(0.0f));
 m.clip_count = clips.load();
-slp_rx_send_meters(&link, &m);
+slp_rx_send_meters(&link_rx, &m);
 ```
 
 `PeakToCentiDb(x)` is `x > 1e-6f ? (int16_t)(2000.0f * log10f(x)) : SLP_METER_SILENCE`. The audio

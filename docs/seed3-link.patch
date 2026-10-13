@@ -1,0 +1,252 @@
+--- a/make/firmware.mk
++++ b/make/firmware.mk
+@@ -1,4 +1,5 @@
+ TARGET = passthrough
++C_SOURCES = src/link/seed_link_proto.c src/link/slp_receiver.c
+ CPP_SOURCES = src/main.cpp src/audio/nam_processor.cpp src/audio/nam_audio.cpp src/audio/cab_filter.cpp src/models/amp_models.cpp src/models/a2_lite.cpp
+ C_INCLUDES = -Isrc -Ibuild/generated
+ CPP_STANDARD = -std=gnu++20
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -1,7 +1,10 @@
+ #include "audio/nam_audio.h"
+ #include "daisy_seed.h"
++#include "link/slp_receiver.h"
+ #include "models/a2_lite.h"
++#include <algorithm>
+ #include <atomic>
++#include <cmath>
+ #include <cstdint>
+ 
+ daisy::DaisySeed seed;
+@@ -14,6 +17,25 @@
+ static std::atomic<bool> requested_cabinet{true};
+ static std::atomic<bool> bootloader_requested{false};
+ static_assert(ATOMIC_INT_LOCK_FREE == 2, "Audio counters must be lock-free");
++
++// Master volume and mute from the touchscreen, and peaks for its meters. The
++// defaults (gain 1) leave the sound as it was when no touchscreen is connected.
++static std::atomic<float> master_target{1.0f};
++static float master_gain = 1.0f; // Audio callback only.
++static std::atomic<float> in_peak{0.0f};
++static std::atomic<float> out_peak{0.0f};
++static std::atomic<uint32_t> clip_count{0};
++static_assert(std::atomic<float>::is_always_lock_free, "Audio atomics must be lock-free");
++
++// Touchscreen link: USART1 on D13/D14 at 1 Mbaud, received by DMA.
++static daisy::UartHandler link_uart;
++// DMA can only reach some RAM; libDaisy's section macro puts the buffer there.
++static uint8_t DMA_BUFFER_MEM_SECTION link_dma_buf[256];
++// Single-producer / single-consumer ring between the DMA callback and the main loop.
++static uint8_t link_ring[2048];
++static std::atomic<uint32_t> ring_head{0};
++static std::atomic<uint32_t> ring_tail{0};
++static slp_receiver_t link_rx;
+ // Only changed while audio is stopped.
+ static bool bypass = false;
+ static uint32_t ticks_per_us = 1; // Set in InitHardware after clocks are configured.
+@@ -33,6 +55,13 @@
+     audio_callbacks.fetch_add(1, std::memory_order_relaxed);
+ }
+ 
++// Raise a meter peak if this block's is higher; the main loop resets it.
++static void RaisePeak(std::atomic<float> &peak, float value) {
++    float previous = peak.load(std::memory_order_relaxed);
++    while (value > previous && !peak.compare_exchange_weak(previous, value, std::memory_order_relaxed)) {
++    }
++}
++
+ void AudioCallback(daisy::AudioHandle::InputBuffer input_channels, daisy::AudioHandle::OutputBuffer output_channels, size_t frame_count) {
+     // Measure in raw timer ticks: GetUs() wraps every ~17.9 s (2^32 ticks at
+     // 240 MHz), so subtracting two GetUs() values across the wrap yields
+@@ -41,6 +70,25 @@
+ 
+     // Left input in, same signal out on both channels.
+     audio.Process(input_channels[0], output_channels[0], output_channels[1], frame_count, bypass);
++
++    // Ramp to the touchscreen's master gain across the block (no clicks; mute
++    // reaches silence within one block) and record peaks for its meters.
++    const float target = master_target.load(std::memory_order_relaxed);
++    const float step = (target - master_gain) / static_cast<float>(frame_count);
++    float in_max = 0.0f;
++    float out_max = 0.0f;
++    for (size_t i = 0; i < frame_count; ++i) {
++        master_gain += step;
++        output_channels[0][i] *= master_gain;
++        output_channels[1][i] *= master_gain;
++        in_max = std::max(in_max, std::fabs(input_channels[0][i]));
++        out_max = std::max(out_max, std::fabs(output_channels[0][i]));
++    }
++    master_gain = target;
++    if (out_max >= 1.0f)
++        clip_count.fetch_add(1, std::memory_order_relaxed);
++    RaisePeak(in_peak, in_max);
++    RaisePeak(out_peak, out_max);
+ 
+     // Record how long the block took.
+     const uint32_t elapsed_ticks = daisy::System::GetTick() - start_tick;
+@@ -83,6 +131,12 @@
+     uint32_t last_report_ms = 0;
+     bool led_on = false;
+     uint32_t report_count = 0;
++    // Last measured block timing and overruns since boot, for the touchscreen's STATUS.
++    uint32_t last_avg_us = 0;
++    uint32_t last_max_us = 0;
++    uint32_t total_overruns = 0;
++    uint32_t last_status_ms = 0;
++    uint32_t last_meters_ms = 0;
+ #ifdef A2_LITE_PROFILE
+     uint32_t profile_blocks = 0;
+     uint32_t input_mark = 0;
+@@ -215,6 +269,9 @@
+     const uint32_t avg_pct = avg_us * 100 / kBlockBudgetUs;
+     const uint32_t peak_pct = max_us * 100 / kBlockBudgetUs;
+     const int32_t headroom_us = static_cast<int32_t>(kBlockBudgetUs) - static_cast<int32_t>(max_us);
++    state.last_avg_us = avg_us;
++    state.last_max_us = max_us;
++    state.total_overruns += overrun_count;
+     const bool active = !bypass && state.model_ready;
+ 
+     // Print the status line.
+@@ -226,10 +283,131 @@
+     if (state.report_count % 5 == 0)
+         ReportProfile(state);
+ #endif
++}
++
++// UART DMA interrupt: copy bytes only. If the ring is full, drop them; the
++// protocol resyncs.
++static void OnLinkRx(uint8_t *data, size_t size, void *, daisy::UartHandler::Result result) {
++    if (result != daisy::UartHandler::Result::OK)
++        return;
++    uint32_t head = ring_head.load(std::memory_order_relaxed);
++    for (size_t i = 0; i < size; ++i) {
++        const uint32_t next = (head + 1) % sizeof(link_ring);
++        if (next == ring_tail.load(std::memory_order_acquire))
++            break;
++        link_ring[head] = data[i];
++        head = next;
++    }
++    ring_head.store(head, std::memory_order_release);
++}
++
++static const slp_builtin_t kBuiltins[] = {
++    {1, "Fender Twin65"},
++    {2, "Vox AC30 Chimey"},
++    {3, "Marshall JCM800 G5"},
++};
++
++static void LinkSend(void *, const uint8_t *bytes, size_t len) {
++    // At most ~270 bytes, under 3 ms at 1 Mbaud; audio keeps running in its interrupt.
++    link_uart.BlockingTransmit(const_cast<uint8_t *>(bytes), len);
++}
++
++static uint32_t LinkNow(void *) { return daisy::System::GetNow(); }
++
++// Volume is 0..100. A squared curve is close to an audio taper and needs no libm.
++static void OnMaster(void *, uint8_t volume, bool muted) {
++    const float v = volume / 100.0f;
++    master_target.store(muted ? 0.0f : v * v, std::memory_order_relaxed);
+ }
+ 
++// Same path as the USB keys: record the request; ApplyPendingAmpCommand does the switch.
++static void OnSelectModel(void *, const slp_select_model_t *m, const uint8_t *) {
++    if (m->kind == SLP_MODEL_BUILTIN && m->builtin_id >= 1 && m->builtin_id <= kAmpCount)
++        requested_amp.store(m->builtin_id, std::memory_order_relaxed);
++    else if (m->kind == SLP_MODEL_BYPASS)
++        requested_amp.store(0, std::memory_order_relaxed);
++}
++
++static void OnFx(void *, uint8_t fx, bool on, uint8_t) {
++    if (fx == SLP_FX_CAB)
++        requested_cabinet.store(on, std::memory_order_relaxed);
++}
++
++static void OnLink(void *, bool up) { seed.PrintLine(">>> touchscreen link %s", up ? "up" : "lost"); }
++
++static void InitLink() {
++    // UART1 on D13/D14 at 1 Mbaud, received by DMA.
++    daisy::UartHandler::Config uart{};
++    uart.periph = daisy::UartHandler::Config::Peripheral::USART_1;
++    uart.mode = daisy::UartHandler::Config::Mode::TX_RX;
++    uart.baudrate = 1000000;
++    uart.pin_config.tx = daisy::seed::D13;
++    uart.pin_config.rx = daisy::seed::D14;
++    link_uart.Init(uart);
++    link_uart.DmaListenStart(link_dma_buf, sizeof(link_dma_buf), OnLinkRx, nullptr);
++
++    // The receiver: a new boot_id every boot tells the touchscreen to resend everything.
++    daisy::Random::Init();
++    slp_rx_config_t cfg{};
++    cfg.send = LinkSend;
++    cfg.now_ms = LinkNow;
++    cfg.boot_id = daisy::Random::GetValue();
++    cfg.fw_version = "nam-a2";
++    cfg.sample_rate_hz = 48000;
++    cfg.block_size = NamAudio::kBlockSize;
++    cfg.builtins = kBuiltins;
++    cfg.builtin_count = kAmpCount;
++    cfg.on_master = OnMaster;
++    cfg.on_select_model = OnSelectModel;
++    cfg.on_fx = OnFx;
++    cfg.on_link = OnLink;
++    slp_rx_init(&link_rx, &cfg);
++}
++
++// Every main-loop pass: hand the received bytes to the receiver.
++static void PollLink() {
++    uint8_t buf[256];
++    size_t n = 0;
++    uint32_t tail = ring_tail.load(std::memory_order_relaxed);
++    while (tail != ring_head.load(std::memory_order_acquire) && n < sizeof(buf)) {
++        buf[n++] = link_ring[tail];
++        tail = (tail + 1) % sizeof(link_ring);
++    }
++    ring_tail.store(tail, std::memory_order_release);
++    if (n)
++        slp_rx_feed(&link_rx, buf, n);
++    slp_rx_poll(&link_rx);
++}
++
++static int16_t PeakToCentiDb(float x) { return x > 1e-6f ? static_cast<int16_t>(2000.0f * log10f(x)) : SLP_METER_SILENCE; }
++
++// STATUS twice a second, METERS about 30 times a second.
++static void SendTelemetry(AppState &state) {
++    const uint32_t now_ms = daisy::System::GetNow();
++    if (now_ms - state.last_status_ms >= 500) {
++        state.last_status_ms = now_ms;
++        slp_status_t st{};
++        st.cpu_avg_x10 = static_cast<uint16_t>(state.last_avg_us * 1000 / kBlockBudgetUs);
++        st.cpu_peak_x10 = static_cast<uint16_t>(state.last_max_us * 1000 / kBlockBudgetUs);
++        st.overruns = state.total_overruns;
++        st.model_kind = bypass ? SLP_MODEL_BYPASS : SLP_MODEL_BUILTIN;
++        st.builtin_id = bypass ? 0 : static_cast<uint8_t>(state.selected_amp);
++        st.flags = SLP_STATUS_AUDIO_RUNNING | (bypass ? SLP_STATUS_BYPASS : 0) | (!bypass && !state.model_ready ? SLP_STATUS_MODEL_FAILED : 0);
++        slp_rx_send_status(&link_rx, &st);
++    }
++    if (now_ms - state.last_meters_ms >= 33) {
++        state.last_meters_ms = now_ms;
++        slp_meters_t m{};
++        m.in_peak_cdb = PeakToCentiDb(in_peak.exchange(0.0f));
++        m.out_peak_cdb = PeakToCentiDb(out_peak.exchange(0.0f));
++        m.clip_count = clip_count.load(std::memory_order_relaxed);
++        slp_rx_send_meters(&link_rx, &m);
++    }
++}
++
+ int main() {
+     InitHardware();
++    InitLink();
+ 
+     // Load the default amp and start audio.
+     AppState state;
+@@ -242,7 +420,9 @@
+         EnterBootloaderIfRequested();
+         ApplyPendingAmpCommand(state);
+         ApplyPendingCabinetCommand();
++        PollLink();
+         ReportStatus(state);
++        SendTelemetry(state);
+         seed.DelayMs(1);
+     }
+ }
