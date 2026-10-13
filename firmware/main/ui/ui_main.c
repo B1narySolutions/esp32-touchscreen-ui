@@ -30,6 +30,9 @@ static bool s_dirty = false;
 static bool s_wifi_on = true;   // TODO: drive the real radios; these are UI settings only so far
 static bool s_ble_on = true;
 static char s_preset_name[32] = "Preset 1";
+// "Seed controls only" (Settings): the rail and effect panel give way to one page holding only
+// what the Seed acts on today. Effects come back to the full UI as the Seed implements them.
+static bool s_seed_only;
 
 // ---------------------------------------------------------------------------------------------
 // Widgets
@@ -51,11 +54,15 @@ static lv_obj_t *s_drawer_backdrop;
 static lv_obj_t *s_preset_names[UI_PRESET_COUNT];
 static lv_obj_t *s_catalog_backdrop;
 static lv_obj_t *s_catalog_pills[UI_CHAIN_MAX];
+static lv_obj_t *s_screen, *s_rail_band, *s_fx_panel, *s_presets_btn, *s_wifi_status, *s_ble_status;
+static lv_obj_t *s_wifi_row, *s_ble_row, *s_seed_only_switch, *s_seed_only_knob;
 
 static void rebuild_rail(void);
 static void rebuild_panel(void);
 static void update_cab_curve(void);
 static void apply_external_changes(void);
+static void seed_page_refresh(void);
+static void seed_page_build_cards(void);
 
 // ---------------------------------------------------------------------------------------------
 // Persistence: SAVE writes the whole rig to NVS; it's restored at boot. Settings (backlight,
@@ -95,6 +102,7 @@ typedef struct {
 typedef struct {
     uint8_t backlight_pct;
     uint8_t wifi_on, ble_on;
+    uint8_t seed_only;          // added later: older firmware saved only the first three bytes
 } saved_settings_t;
 
 static void save_rig(void) {
@@ -174,18 +182,19 @@ static void load_saved_state(void) {
         ESP_LOGI(TAG, "restored saved rig \"%s\"", s_preset_name);
     }
 
-    saved_settings_t st;
+    saved_settings_t st = { 0 };
     len = sizeof(st);
-    if (nvs_get_blob(h, NVS_KEY_SET, &st, &len) == ESP_OK && len == sizeof(st)) {
+    if (nvs_get_blob(h, NVS_KEY_SET, &st, &len) == ESP_OK && len >= 3 && len <= sizeof(st)) {
         board_set_backlight_pct(st.backlight_pct);
         s_wifi_on = st.wifi_on;
         s_ble_on = st.ble_on;
+        s_seed_only = st.seed_only;
     }
     nvs_close(h);
 }
 
 static void save_settings(void) {
-    saved_settings_t st = { board_get_backlight_pct(), s_wifi_on, s_ble_on };
+    saved_settings_t st = { board_get_backlight_pct(), s_wifi_on, s_ble_on, s_seed_only };
     nvs_handle_t h;
     if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) return;
     if (nvs_set_blob(h, NVS_KEY_SET, &st, sizeof(st)) == ESP_OK) nvs_commit(h);
@@ -450,8 +459,8 @@ static void build_top_bar(lv_obj_t *screen) {
     lv_obj_add_flag(s_edited_badge, LV_OBJ_FLAG_HIDDEN);
 
     lv_obj_t *right = make_row(bar, 20);
-    make_status(right, "Wi-Fi", &s_wifi_dot);
-    make_status(right, "BLE", &s_ble_dot);
+    s_wifi_status = make_status(right, "Wi-Fi", &s_wifi_dot);
+    s_ble_status = make_status(right, "BLE", &s_ble_dot);
     refresh_status_dots();
 
     lv_obj_t *save_btn = lv_button_create(right);
@@ -489,6 +498,7 @@ static void rebuild_rail(void) {
 
 static void build_chain_rail(lv_obj_t *screen) {
     lv_obj_t *band = lv_obj_create(screen);
+    s_rail_band = band;
     lv_obj_remove_style_all(band);
     lv_obj_set_size(band, LV_PCT(100), 112);
     lv_obj_align(band, LV_ALIGN_TOP_MID, 0, 60);
@@ -560,17 +570,19 @@ static int selected_card(uint8_t fx) {
     return r->model[fx];
 }
 
-static void restyle_model_cards(uint8_t fx) {
+static void restyle_cards_in(lv_obj_t *row, uint8_t fx) {
     const lv_color_t color = g_effects[fx].color;
     const int sel = selected_card(fx);
-    const uint32_t n = lv_obj_get_child_cnt(s_model_row);
+    const uint32_t n = lv_obj_get_child_cnt(row);
     for (uint32_t i = 0; i < n; i++) {
-        lv_obj_t *card = lv_obj_get_child(s_model_row, i);
+        lv_obj_t *card = lv_obj_get_child(row, i);
         const int index = (int)(uintptr_t)lv_obj_get_user_data(card);
         lv_obj_set_style_border_color(card, index == sel ? color : UI_COLOR_TRACK, 0);
         lv_obj_set_style_text_color(lv_obj_get_child(card, 0), index == sel ? color : UI_COLOR_TEXT, 0);
     }
 }
+
+static void restyle_model_cards(uint8_t fx) { restyle_cards_in(s_model_row, fx); }
 
 static void lib_open(void);
 
@@ -607,8 +619,9 @@ static void model_card_cb(lv_event_t *e) {
 
 #define MODEL_CARD_H 72 // name + two description lines; every card in the row is this tall
 
-static void add_model_card(int index, const char *title, const char *desc, bool sel, lv_color_t color, bool disabled) {
-    lv_obj_t *card = lv_obj_create(s_model_row);
+static void add_card_in(lv_obj_t *row, lv_event_cb_t cb, int index, const char *title, const char *desc, bool sel,
+                        lv_color_t color, bool disabled) {
+    lv_obj_t *card = lv_obj_create(row);
     lv_obj_remove_style_all(card);
     lv_obj_set_size(card, 196, MODEL_CARD_H);
     lv_obj_set_style_bg_color(card, UI_COLOR_CARD, 0);
@@ -623,7 +636,7 @@ static void add_model_card(int index, const char *title, const char *desc, bool 
     lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
     lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_event_cb(card, model_card_cb, LV_EVENT_CLICKED, (void *)(uintptr_t)index);
+    lv_obj_add_event_cb(card, cb, LV_EVENT_CLICKED, (void *)(uintptr_t)index);
     lv_obj_set_user_data(card, (void *)(uintptr_t)index);
 
     lv_obj_t *name = make_label(card, title, &lv_font_montserrat_14, sel ? color : disabled ? UI_COLOR_TEXT_MUTED : UI_COLOR_TEXT);
@@ -633,6 +646,12 @@ static void add_model_card(int index, const char *title, const char *desc, bool 
     lv_obj_set_size(d, LV_PCT(100), 2 * lv_font_get_line_height(&lv_font_montserrat_12));
     lv_label_set_long_mode(d, LV_LABEL_LONG_DOT); // at most two lines, then "..."
 }
+
+static void add_model_card(int index, const char *title, const char *desc, bool sel, lv_color_t color, bool disabled) {
+    add_card_in(s_model_row, model_card_cb, index, title, desc, sel, color, disabled);
+}
+
+static void fill_amp_cards(lv_obj_t *row, lv_event_cb_t cb);
 
 static void build_model_cards(const ui_effect_def_t *def) {
     lv_obj_clean(s_model_row);
@@ -648,12 +667,18 @@ static void build_model_cards(const ui_effect_def_t *def) {
         for (int m = 0; m < n; m++) add_model_card(m, def->models[m].name, def->models[m].desc, m == sel, def->color, false);
         return;
     }
-    // AMP: the Seed's built-in amps, the selected SD profile (if any), then the SD Library card,
-    // which lists everything on the card at full width.
+    fill_amp_cards(s_model_row, model_card_cb);
+}
+
+// AMP: the Seed's built-in amps, the selected SD profile (if any), then the SD Library card,
+// which lists everything on the card at full width.
+static void fill_amp_cards(lv_obj_t *row, lv_event_cb_t cb) {
+    const lv_color_t color = g_effects[FX_AMP].color;
+    const int sel = selected_card(FX_AMP);
     const int builtins = amp_models_builtin_count();
     amp_model_t am;
-    for (int m = 0; m < builtins && amp_models_get(m, &am); m++) add_model_card(m, am.name, am.desc, m == sel, def->color, false);
-    if (sel >= builtins && amp_models_get(sel, &am)) add_model_card(sel, am.name, "From the SD card", true, def->color, false);
+    for (int m = 0; m < builtins && amp_models_get(m, &am); m++) add_card_in(row, cb, m, am.name, am.desc, m == sel, color, false);
+    if (sel >= builtins && amp_models_get(sel, &am)) add_card_in(row, cb, sel, am.name, "From the SD card", true, color, false);
     nam_store_status_t st;
     nam_store_status(&st);
     char desc[72];
@@ -661,8 +686,8 @@ static void build_model_cards(const ui_effect_def_t *def) {
     else if (!st.card_ok) snprintf(desc, sizeof(desc), "No usable SD card. Tap for details.");
     else snprintf(desc, sizeof(desc), "%d profile%s%s. Tap to browse.", st.accepted, st.accepted == 1 ? "" : "s",
                   st.rejected ? ", some can't be used" : "");
-    add_model_card(LIBRARY_CARD, "SD Library  " LV_SYMBOL_RIGHT, desc, false, def->color, false);
-    s_amp_cards_version = amp_models_version();
+    add_card_in(row, cb, LIBRARY_CARD, "SD Library  " LV_SYMBOL_RIGHT, desc, false, color, false);
+    if (row == s_model_row) s_amp_cards_version = amp_models_version();
 }
 
 // One line under the AMP cards saying what the Seed is actually running. Only real link data:
@@ -707,14 +732,19 @@ static void amp_status_text(char *buf, size_t len) {
     snprintf(buf, len, running ? "Running on the Seed%s." : "Switching model on the Seed%s...", mock);
 }
 
-static void refresh_amp_status(void) {
-    if (s_selected_fx != FX_AMP) return;
-    char text[200];
+// The Seed's amp state, then the SD card's, on two lines.
+static void amp_status_full(char *text, size_t len) {
     amp_status_text(text, 100);
     nam_store_status_t sd;
     nam_store_status(&sd);
     const size_t n = strlen(text);
-    snprintf(text + n, sizeof(text) - n, "\n%s", sd.status);
+    snprintf(text + n, len - n, "\n%s", sd.status);
+}
+
+static void refresh_amp_status(void) {
+    if (s_selected_fx != FX_AMP) return;
+    char text[200];
+    amp_status_full(text, sizeof(text));
     if (strcmp(lv_label_get_text(s_amp_status), text) != 0) lv_label_set_text(s_amp_status, text);
 }
 
@@ -764,11 +794,12 @@ static void meter_timer_cb(lv_timer_t *t) {
     (void)t;
     apply_external_changes();
     amp_models_sync_from_seed();
-    if (s_selected_fx == FX_AMP) {
+    if (s_selected_fx == FX_AMP && !s_seed_only) {
         if (amp_models_version() != s_amp_cards_version) build_model_cards(&g_effects[FX_AMP]);
         if (!lv_obj_has_flag(s_lib_backdrop, LV_OBJ_FLAG_HIDDEN) && amp_models_version() != s_lib_version) lib_fill();
         refresh_amp_status();
     }
+    if (s_seed_only) seed_page_refresh();
     seed_link_stats_t s;
     seed_link_get_stats(&s);
     const bool live = s.connected && s.meters_valid;
@@ -807,6 +838,7 @@ static lv_obj_t *make_meter(lv_obj_t *parent, lv_color_t color) {
 
 static void build_fx_panel(lv_obj_t *screen) {
     lv_obj_t *panel = lv_obj_create(screen);
+    s_fx_panel = panel;
     lv_obj_remove_style_all(panel);
     lv_obj_set_size(panel, LV_PCT(100), 346);
     lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, 172);
@@ -940,7 +972,7 @@ static void build_bottom_bar(lv_obj_t *screen) {
     lv_obj_set_flex_align(bar, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
 
-    make_ghost_btn(bar, "Presets", 110, presets_btn_cb);
+    s_presets_btn = make_ghost_btn(bar, "Presets", 110, presets_btn_cb);
     make_ghost_btn(bar, "Settings", 110, settings_btn_cb);
 
     lv_obj_t *master = make_row(bar, 16);
@@ -1003,6 +1035,14 @@ static lv_obj_t *make_setting_row(lv_obj_t *card, const char *text) {
     return row;
 }
 
+static void apply_seed_only(void);
+
+static void seed_only_switch_cb(lv_event_t *e) {
+    (void)e;
+    s_seed_only = !s_seed_only;
+    apply_seed_only();
+}
+
 static void build_settings_overlay(lv_obj_t *screen) {
     s_settings_backdrop = make_backdrop(screen, close_settings_cb);
     lv_obj_t *card = make_card(s_settings_backdrop, 400, 290);
@@ -1026,10 +1066,19 @@ static void build_settings_overlay(lv_obj_t *screen) {
     lv_obj_set_width(s_backlight_value, 44);
     lv_label_set_text_fmt(s_backlight_value, "%u%%", board_get_backlight_pct());
 
-    lv_obj_t *wifi_row = make_setting_row(card, "Wi-Fi");
-    s_wifi_switch = make_pill_switch(wifi_row, s_wifi_on, wifi_switch_cb, &s_wifi_knob);
-    lv_obj_t *ble_row = make_setting_row(card, "Bluetooth");
-    s_ble_switch = make_pill_switch(ble_row, s_ble_on, ble_switch_cb, &s_ble_knob);
+    s_wifi_row = make_setting_row(card, "Wi-Fi");
+    s_wifi_switch = make_pill_switch(s_wifi_row, s_wifi_on, wifi_switch_cb, &s_wifi_knob);
+    s_ble_row = make_setting_row(card, "Bluetooth");
+    s_ble_switch = make_pill_switch(s_ble_row, s_ble_on, ble_switch_cb, &s_ble_knob);
+
+    lv_obj_t *seed_row = make_setting_row(card, "Seed controls only");
+    s_seed_only_switch = make_pill_switch(seed_row, s_seed_only, seed_only_switch_cb, &s_seed_only_knob);
+    lv_obj_t *hint = make_label(card, "Show only what the Seed runs today: amp model, amp on/off, master and mute. "
+                                      "Other effects keep their settings and come back when this is off.",
+                                &lv_font_montserrat_12, UI_COLOR_TEXT_MUTED);
+    lv_obj_set_width(hint, LV_PCT(100));
+    lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
+    lv_obj_set_height(card, LV_SIZE_CONTENT);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1210,7 +1259,8 @@ static void lib_row_cb(lv_event_t *e) {
     ui_main_mark_dirty();
     lv_obj_add_flag(s_lib_backdrop, LV_OBJ_FLAG_HIDDEN);
     // Rebuilding the AMP cards here is safe: the clicked row belongs to the popup, not the row.
-    build_model_cards(&g_effects[FX_AMP]);
+    if (s_seed_only) seed_page_build_cards();
+    else if (s_selected_fx == FX_AMP) build_model_cards(&g_effects[FX_AMP]);
     refresh_amp_status();
 }
 
@@ -1359,6 +1409,259 @@ static void build_catalog(lv_obj_t *screen) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Seed controls page ("Seed controls only" in Settings). Only controls the Seed acts on today
+// (amp model, amp on/bypass; master and mute stay in the bottom bar) and only real readings:
+// no link, no STATUS or no METERS show "-", and a mock Seed is labelled MOCK.
+
+static lv_obj_t *s_seed_page, *s_seed_cards, *s_seed_amp_status, *s_seed_amp_sw, *s_seed_amp_knob;
+static lv_obj_t *s_seed_link_dot, *s_seed_link, *s_seed_dsp, *s_seed_mock;
+static lv_obj_t *s_seed_meter_in, *s_seed_meter_out, *s_seed_in_db, *s_seed_out_db;
+static uint32_t s_seed_cards_version;
+static int s_seed_amp_shown = -1;   // amp on/off the switch shows, -1 = not drawn yet
+static int s_seed_link_shown = -1;  // link dot colour shown: 0 none, 1 Seed, 2 mock; -1 = not drawn
+
+// These only touch the widget when something changes: LVGL redraws on every set, even to the
+// same value, and the page refreshes 20 times a second.
+static void set_hidden(lv_obj_t *o, bool hidden) {
+    if (lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN) == hidden) return;
+    if (hidden) lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_clear_flag(o, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void set_text_if_changed(lv_obj_t *label, const char *text) {
+    if (strcmp(lv_label_get_text(label), text) != 0) lv_label_set_text(label, text);
+}
+
+static void seed_card_cb(lv_event_t *e) {
+    const int m = (int)(uintptr_t)lv_event_get_user_data(e);
+    if (m == LIBRARY_CARD) {
+        lib_open();
+        return;
+    }
+    amp_model_t am;
+    if (!amp_models_get(m, &am) || am.rejected) return;
+    if (am.builtin) {
+        const ui_effect_def_t *def = &g_effects[FX_AMP];
+        rig_set_model(FX_AMP, (uint8_t)m, m < def->model_count ? def->models[m].values : NULL, RIG_SRC_UI);
+    } else {
+        rig_set_amp_sd(am.sd_hash, RIG_SRC_UI); // the link uploads it if the Seed lacks it
+    }
+    // Restyle in place: rebuilding would delete the card whose CLICKED event is being dispatched.
+    restyle_cards_in(s_seed_cards, FX_AMP);
+    ui_main_mark_dirty();
+}
+
+static void seed_page_build_cards(void) {
+    lv_obj_clean(s_seed_cards);
+    fill_amp_cards(s_seed_cards, seed_card_cb);
+    s_seed_cards_version = amp_models_version();
+}
+
+static void seed_amp_switch_cb(lv_event_t *e) {
+    (void)e;
+    const bool on = !rig()->on[FX_AMP];
+    // An amp removed from the chain on the full page counts as off there; put it back so both
+    // views agree.
+    bool in_chain = false;
+    for (int i = 0; i < rig()->chain_len; i++) in_chain |= rig()->chain[i] == FX_AMP;
+    if (on && !in_chain && rig()->chain_len < UI_CHAIN_MAX) {
+        uint8_t chain[UI_CHAIN_MAX];
+        memcpy(chain, rig()->chain, sizeof(chain));
+        chain[rig()->chain_len] = FX_AMP;
+        rig_set_chain(chain, (uint8_t)(rig()->chain_len + 1), RIG_SRC_UI);
+    }
+    rig_set_fx_on(FX_AMP, on, RIG_SRC_UI);
+    ui_main_mark_dirty();
+    seed_page_refresh();
+}
+
+static void seed_test_mode_cb(lv_event_t *e) {
+    (void)e;
+    ui_test_mode_open();
+}
+
+static void seed_page_refresh(void) {
+    if (amp_models_version() != s_seed_cards_version) seed_page_build_cards();
+    const int amp_on = rig()->on[FX_AMP];
+    if (amp_on != s_seed_amp_shown) {
+        set_switch(s_seed_amp_sw, s_seed_amp_knob, amp_on);
+        restyle_cards_in(s_seed_cards, FX_AMP);
+        s_seed_amp_shown = amp_on;
+    }
+    char text[200];
+    amp_status_full(text, sizeof(text));
+    set_text_if_changed(s_seed_amp_status, text);
+
+    seed_link_stats_t s;
+    seed_link_get_stats(&s);
+    const int link = s.connected ? (s.peer_mock ? 2 : 1) : 0;
+    if (link != s_seed_link_shown) {
+        lv_obj_set_style_bg_color(s_seed_link_dot, link == 2 ? UI_COLOR_WARN : link == 1 ? UI_COLOR_OK : UI_COLOR_OFF, 0);
+        s_seed_link_shown = link;
+    }
+    set_text_if_changed(s_seed_link, s.connected ? (s.peer_mock ? "Connected (MOCK)" : "Connected") : "Not connected");
+    if (s.connected && s.status_valid) snprintf(text, sizeof(text), "%.1f %%%s", s.dsp_cpu_pct, s.peer_mock ? " MOCK" : "");
+    else snprintf(text, sizeof(text), "-");
+    set_text_if_changed(s_seed_dsp, text);
+
+    const bool live = s.connected && s.meters_valid;
+    const int32_t in = live ? meter_px(s.input_peak_dbfs) : 0, out = live ? meter_px(s.output_peak_dbfs) : 0;
+    if (lv_obj_get_height(s_seed_meter_in) != in) lv_obj_set_height(s_seed_meter_in, in);
+    if (lv_obj_get_height(s_seed_meter_out) != out) lv_obj_set_height(s_seed_meter_out, out);
+    if (live) snprintf(text, sizeof(text), "%.0f", s.input_peak_dbfs);
+    set_text_if_changed(s_seed_in_db, live ? text : "-");
+    if (live) snprintf(text, sizeof(text), "%.0f", s.output_peak_dbfs);
+    set_text_if_changed(s_seed_out_db, live ? text : "-");
+    set_hidden(s_seed_mock, !(s.connected && s.peer_mock));
+}
+
+// Built only while the mode is on: small LVGL allocations land in internal RAM (64-byte
+// threshold), the board's scarcest resource, so the page costs nothing when it isn't used.
+static void build_seed_page(lv_obj_t *screen) {
+    // Fills the space of the chain rail and effect panel, between the top and bottom bars.
+    s_seed_page = lv_obj_create(screen);
+    lv_obj_remove_style_all(s_seed_page);
+    lv_obj_set_size(s_seed_page, LV_PCT(100), 458);
+    lv_obj_align(s_seed_page, LV_ALIGN_TOP_MID, 0, 60);
+    lv_obj_set_style_bg_color(s_seed_page, UI_COLOR_BG, 0);
+    lv_obj_set_style_bg_opa(s_seed_page, LV_OPA_COVER, 0);
+    lv_obj_set_flex_flow(s_seed_page, LV_FLEX_FLOW_ROW);
+    lv_obj_clear_flag(s_seed_page, LV_OBJ_FLAG_SCROLLABLE);
+
+    // Left: the amp.
+    lv_obj_t *main = lv_obj_create(s_seed_page);
+    lv_obj_remove_style_all(main);
+    lv_obj_set_height(main, LV_PCT(100));
+    lv_obj_set_flex_grow(main, 1);
+    lv_obj_set_style_pad_left(main, 32, 0);
+    lv_obj_set_style_pad_right(main, 24, 0);
+    lv_obj_set_style_pad_top(main, 22, 0);
+    lv_obj_set_style_pad_bottom(main, 18, 0);
+    lv_obj_set_style_pad_row(main, 14, 0);
+    lv_obj_set_flex_flow(main, LV_FLEX_FLOW_COLUMN);
+    lv_obj_clear_flag(main, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *title_row = make_row(main, 14);
+    lv_obj_set_width(title_row, LV_PCT(100));
+    lv_obj_t *swatch = lv_obj_create(title_row);
+    lv_obj_remove_style_all(swatch);
+    lv_obj_set_size(swatch, 10, 10);
+    lv_obj_set_style_radius(swatch, 3, 0);
+    lv_obj_set_style_bg_color(swatch, g_effects[FX_AMP].color, 0);
+    lv_obj_set_style_bg_opa(swatch, LV_OPA_COVER, 0);
+    make_label(title_row, "AMP", &lv_font_montserrat_16, UI_COLOR_TEXT);
+    lv_obj_t *sub = make_label(title_row, "Neural amp model, run by the Seed", &lv_font_montserrat_12, UI_COLOR_TEXT_MUTED);
+    lv_obj_set_flex_grow(sub, 1);
+    make_label(title_row, "Amp on", NULL, UI_COLOR_TEXT);
+    s_seed_amp_sw = make_pill_switch(title_row, rig()->on[FX_AMP], seed_amp_switch_cb, &s_seed_amp_knob);
+
+    s_seed_cards = lv_obj_create(main);
+    lv_obj_remove_style_all(s_seed_cards);
+    lv_obj_set_size(s_seed_cards, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(s_seed_cards, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(s_seed_cards, 10, 0);
+    lv_obj_set_scroll_dir(s_seed_cards, LV_DIR_HOR);
+    lv_obj_set_scrollbar_mode(s_seed_cards, LV_SCROLLBAR_MODE_OFF);
+
+    s_seed_amp_status = make_label(main, "", &lv_font_montserrat_12, UI_COLOR_TEXT_MUTED);
+    lv_obj_set_width(s_seed_amp_status, LV_PCT(100));
+    lv_label_set_long_mode(s_seed_amp_status, LV_LABEL_LONG_WRAP);
+
+    lv_obj_t *cab = make_label(main, "CABINET   The Seed's speaker cabinet EQ follows the amp. It is fixed and always on; "
+                                     "it has no controls yet.", &lv_font_montserrat_12, UI_COLOR_TEXT_MUTED);
+    lv_obj_set_width(cab, LV_PCT(100));
+    lv_label_set_long_mode(cab, LV_LABEL_LONG_WRAP);
+
+    lv_obj_t *spacer = lv_obj_create(main);
+    lv_obj_remove_style_all(spacer);
+    lv_obj_set_width(spacer, 1);
+    lv_obj_set_flex_grow(spacer, 1);
+
+    lv_obj_t *foot = make_row(main, 18);
+    lv_obj_set_width(foot, LV_PCT(100));
+    make_ghost_btn(foot, "Test Mode", 140, seed_test_mode_cb);
+    lv_obj_t *note = make_label(foot, "Seed controls only: effects the Seed doesn't run yet are hidden, with their settings "
+                                      "kept. Settings turns the full UI back on.", &lv_font_montserrat_12, UI_COLOR_TEXT_DIM);
+    lv_obj_set_flex_grow(note, 1);
+    lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
+
+    // Right: what the Seed reports.
+    lv_obj_t *side = lv_obj_create(s_seed_page);
+    lv_obj_remove_style_all(side);
+    lv_obj_set_size(side, 210, LV_PCT(100));
+    lv_obj_set_style_border_side(side, LV_BORDER_SIDE_LEFT, 0);
+    lv_obj_set_style_border_width(side, 1, 0);
+    lv_obj_set_style_border_color(side, UI_COLOR_DIVIDER, 0);
+    lv_obj_set_style_pad_all(side, 22, 0);
+    lv_obj_set_style_pad_row(side, 8, 0);
+    lv_obj_set_flex_flow(side, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(side, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_clear_flag(side, LV_OBJ_FLAG_SCROLLABLE);
+
+    make_label(side, "SEED3", &lv_font_montserrat_12, UI_COLOR_TEXT_MUTED);
+    lv_obj_t *link = make_row(side, 8);
+    s_seed_link_dot = lv_obj_create(link);
+    lv_obj_remove_style_all(s_seed_link_dot);
+    lv_obj_set_size(s_seed_link_dot, 9, 9);
+    lv_obj_set_style_radius(s_seed_link_dot, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_opa(s_seed_link_dot, LV_OPA_COVER, 0);
+    s_seed_link = make_label(link, "", &lv_font_montserrat_14, UI_COLOR_TEXT);
+    make_label(side, "DSP LOAD", &lv_font_montserrat_12, UI_COLOR_TEXT_MUTED);
+    s_seed_dsp = make_label(side, "-", &lv_font_montserrat_14, UI_COLOR_TEXT);
+
+    lv_obj_t *bars = make_row(side, 22);
+    lv_obj_set_style_pad_top(bars, 10, 0);
+    s_seed_meter_in = make_meter(bars, lv_color_hex(0x5c8ee0));
+    s_seed_meter_out = make_meter(bars, UI_COLOR_OK);
+    lv_obj_t *names = make_row(side, 16);
+    make_label(names, "IN", &lv_font_montserrat_12, UI_COLOR_TEXT_MUTED);
+    make_label(names, "OUT", &lv_font_montserrat_12, UI_COLOR_TEXT_MUTED);
+    lv_obj_t *dbs = make_row(side, 16);
+    s_seed_in_db = make_label(dbs, "-", &lv_font_montserrat_12, UI_COLOR_TEXT);
+    s_seed_out_db = make_label(dbs, "-", &lv_font_montserrat_12, UI_COLOR_TEXT);
+    make_label(side, "dBFS peak", &lv_font_montserrat_12, UI_COLOR_TEXT_DIM);
+    s_seed_mock = make_label(side, "MOCK SEED", &lv_font_montserrat_12, UI_COLOR_WARN);
+    lv_obj_add_flag(s_seed_mock, LV_OBJ_FLAG_HIDDEN);
+}
+
+// Shows the Seed controls page or the full UI, per s_seed_only. Whichever is hidden gives back
+// its widgets: the page is deleted, or the rail's chips and the panel's cards and knobs are.
+static void apply_seed_only(void) {
+    const bool on = s_seed_only;
+    set_hidden(s_rail_band, on);
+    set_hidden(s_fx_panel, on);
+    // Presets mostly set effects the Seed doesn't run; the radios aren't wired up yet.
+    set_hidden(s_presets_btn, on);
+    set_hidden(s_wifi_status, on);
+    set_hidden(s_ble_status, on);
+    set_hidden(s_wifi_row, on);
+    set_hidden(s_ble_row, on);
+    set_switch(s_seed_only_switch, s_seed_only_knob, on);
+    if (on) {
+        for (int fx = 0; fx < FX_CAB; fx++) s_chips[fx] = NULL;
+        lv_obj_clean(s_rail);
+        lv_obj_clean(s_model_row);
+        lv_obj_clean(s_knob_row);
+        if (!s_seed_page) {
+            build_seed_page(s_screen);
+            // Created after the popups (Settings, Test Mode, slider ...): move it under them.
+            lv_obj_move_to_index(s_seed_page, lv_obj_get_index(s_fx_panel) + 1);
+        }
+        seed_page_build_cards();
+        s_seed_amp_shown = -1;
+        s_seed_link_shown = -1;
+        seed_page_refresh();
+    } else {
+        if (s_seed_page) lv_obj_delete(s_seed_page);
+        s_seed_page = NULL;
+        // The amp may have changed on the page; rebuild what the full UI shows.
+        rebuild_rail();
+        rebuild_panel();
+    }
+    ESP_LOGI(TAG, "%s", on ? "Seed controls only" : "full UI");
+}
+
+// ---------------------------------------------------------------------------------------------
 // Following changes made elsewhere (physical knobs, SD loader)
 
 uint8_t ui_main_selected_fx(void) { return s_selected_fx; }
@@ -1395,7 +1698,7 @@ static void apply_external_changes(void) {
         refresh_all_chip_styles();
         restyle_model_cards(s_selected_fx);
     }
-    if (dirty & RIG_DIRTY_CHAIN) rebuild_rail();
+    if ((dirty & RIG_DIRTY_CHAIN) && !s_seed_only) rebuild_rail(); // rebuilt when the page closes
     // Master volume doesn't mark the rig EDITED on the touch path either.
     if (dirty & (RIG_DIRTY_PARAMS | RIG_DIRTY_FX | RIG_DIRTY_CHAIN)) ui_main_mark_dirty();
 }
@@ -1436,6 +1739,7 @@ void ui_main_init(void) {
     load_saved_state();
 
     lv_obj_t *screen = lv_obj_create(NULL);
+    s_screen = screen;
     lv_obj_remove_style_all(screen);
     // remove_style_all() also drops the theme's text colour, which would leave every
     // label below inheriting LVGL's built-in default: black.
@@ -1455,6 +1759,7 @@ void ui_main_init(void) {
     build_sd_library(screen);
     ui_test_mode_init(screen);
 
+    if (s_seed_only) apply_seed_only();
     lv_screen_load(screen);
     rig_set_observer(on_rig_external);
 }

@@ -53,6 +53,15 @@ Firmware builds with **ESP-IDF v5.5.5**, flashed and running on the 7B.
 - **Physical knobs**: a 10k pot on J8 works as master volume (stand-in). Driver for two Adafruit
   STEMMA QT encoders is written but untested (hardware not here yet); enable it in menuconfig.
 - No fake data anywhere: anything from the simulated Seed is labelled MOCK on screen.
+- **Seed controls only** (Settings switch, saved): replaces the effects rail and panel with one page
+  holding only what the Seed acts on today (amp model incl. SD profiles, amp on/bypass; master and
+  mute in the bottom bar) plus real readings (link, DSP load, IN/OUT peaks). Presets and the Wi-Fi/BLE
+  indicators are hidden in this mode. The other effects keep their settings and are still sent to the
+  Seed, which ignores them until it implements them; bring each back to the full UI as it lands. Only
+  master/mute, amp model and amp bypass act on the Seed with the proposed integration (the cabinet is
+  never bypassed from the UI). Effects the Seed will never run are to be removed from the UI.
+- **Known non-functional controls:** the Wi-Fi and Bluetooth switches in Settings (and their top-bar
+  dots) don't drive any radio yet (`TODO` in ui_main.c). Wire them up or remove them.
 
 ## Display performance (measured)
 
@@ -137,7 +146,10 @@ startup at "Enter psram timing tuning" (RESET recovers it; `capture_log.py` wait
 - `firmware/sdkconfig` is gitignored; after a `sdkconfig.defaults` change delete it and rebuild.
 - Hands-on tests: start `tools/capture_log.py` (and the mock) **before** asking someone to touch
   the board; the tool writes as it reads, so stop it after they're done.
-- Use the IDF Python (`%USERPROFILE%\.espressif\python_env\idf5.5_py3.13_env\Scripts\python.exe`)
-  for the tools; it has pyserial.
+- Use the IDF Python (`%USERPROFILE%\.espressif\python_env\idf5.5_py3.13_env\Scripts\python.exe`;
+  on a Mac `~/.espressif/python_env/idf5.5_py3.14_env/bin/python`) for the tools; it has pyserial.
+- On a Mac: host tests with `bash tools/run_host_tests.sh` (clang, ASan/UBSan; also builds
+  `build/host/seed_sim`). The model tools take `SEED_REPO=~/amp/ref-seed3` when the Seed repo isn't
+  at `../reference/realtime-nam-seed3`. Opening the native USB port resets the board on macOS.
 - Never commit `.nam` files or anything with model weights (T3K license); `models/` is ignored.
 - Test Mode's Firmware row shows the git version plus the ELF SHA256 prefix.
