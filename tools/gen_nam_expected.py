@@ -9,11 +9,16 @@ so the two can never drift apart. Rerun after convert_a2.py changes; --check fai
 """
 
 import json
+import os
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT.parent / "reference" / "realtime-nam-seed3" / "scripts"))
+# The realtime-nam-seed3 checkout (read only). SEED_REPO overrides the default layout, e.g.
+# SEED_REPO=~/amp/ref-seed3 on a Mac. No bytecode is written into it.
+SEED = Path(os.environ.get("SEED_REPO") or ROOT.parent / "reference" / "realtime-nam-seed3").expanduser()
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(SEED / "scripts"))
 import convert_a2  # noqa: E402
 
 OUT = ROOT / "firmware" / "main" / "nam" / "nam_a2_expected.h"

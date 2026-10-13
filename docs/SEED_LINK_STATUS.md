@@ -38,14 +38,19 @@ drop-in receiver code, `slp_receiver.c`).
 | Model upload | 7484 bytes in 83-86 ms, CRC verified by the receiver every time. |
 | UART at 1 Mbaud with the display busy | 0 overruns during drags, fault tests and snapshots; 1 overrun seen once, at the moment the mock process reopened the port (not reproduced since). |
 | 30-minute soak | PASS: 360 snapshots all complete, 0 decode errors both ways, 0 UART overruns, no link drops, no resets, no display stalls or RGB restarts, heap_min flat at 47.8 KB over 1,766 DIAG lines. |
+| macOS, 2026-10-13 | `seed_sim` (now also builds on macOS/Linux) against the touchscreen for 21 min: 252 of 252 snapshots confirmed, no link drops, 2 decode errors and 1 UART overrun only at the moment the port opened (none after), heap_min flat at 49.0 KB, no display stalls. Amp bypass from the touchscreen arrived as SELECT_MODEL bypass; SD profile f737e066 uploaded and CRC-verified by the receiver. Reset counters followed by a Seed reboot now gives the new boot's counts (was a wrap to ~4.29e9). |
 | The Seed's receiver code against the real ESP32 | `seed_sim` (slp_receiver.c on the PC): link up in 3 ms, 132 of 133 snapshots confirmed (the last was in flight), mute both ways, coalesced slider drags, ping 1.6-1.9 ms, SD profile upload received with CRC check and selected (`3949448f`, weights held). 0 link errors, 0 UART overruns. |
 
 ## Host-tested only
 
+- Protocol library on macOS too (2026-10-13, clang ASan/UBSan, `tools/run_host_tests.sh`): 51,022 checks, 0 failures; `tools/test_slp_py.py` 17 of 17.
 - Protocol library: 51,022 checks (COBS/CRC vectors, every message, 2 M-byte decoder fuzz, coalescer), MSVC `/W4 /WX` + AddressSanitizer.
 - `.nam` converter: byte-identical to `convert_a2.py` on the three real models; 47-case differential test agrees on every accept/reject (including rounding ties, `True == 1`, duplicate keys, BOM, overflow).
 - Seed receiver (`slp_receiver.c`): handshake, hooks, snapshot confirmation, out-of-order and repeated chunks, CRC failure, range and size limits, link loss with state kept, noise.
 - Python protocol (`tools/slp.py`) matches the C encoder byte for byte on all 17 examples.
+- Seed integration patch ([seed3-link.patch](seed3-link.patch), 2026-10-13): compiles and links into
+  `realtime-nam-seed3` `230eb74` against libDaisy `cc146d5` (Arm GNU 15.3.rel2), no new warnings, flash
+  103,428 B to 111,636 B of 128 KB. Not run on a Seed.
 
 ## Not tested yet
 

@@ -1,5 +1,6 @@
 # Host unit tests for the Seed link protocol (no ESP-IDF). Run with tools/run_host_tests.ps1, or:
 #   cmake -S tests/host -B build/host -G Ninja && cmake --build build/host && build/host/host_tests
+# (macOS/Linux: tools/run_host_tests.sh does the same.)
 cmake_minimum_required(VERSION 3.16)
 project(seed_link_host_tests C)
 
@@ -34,10 +35,10 @@ target_link_libraries(nam_check PRIVATE slp)
 target_compile_options(nam_check PRIVATE ${WARN} ${SAN})
 set_property(TARGET nam_check PROPERTY C_STANDARD 11)
 
-# Runs the Seed-side receiver on a PC serial port against the real ESP32 (Windows).
+# Runs the Seed-side receiver on a PC serial port against the real ESP32 (Windows, macOS, Linux).
 add_executable(seed_sim seed_sim.c)
 target_link_libraries(seed_sim PRIVATE slp)
-target_compile_options(seed_sim PRIVATE ${WARN})
+target_compile_options(seed_sim PRIVATE ${WARN} ${SAN})
 set_property(TARGET seed_sim PROPERTY C_STANDARD 11)
 
 # Prints the hex examples used in docs/SEED_LINK_PROTOCOL.md.
@@ -50,6 +51,7 @@ if(NOT MSVC)
     target_link_options(host_tests PRIVATE ${SAN})
     target_link_options(slp_examples PRIVATE ${SAN})
     target_link_options(nam_check PRIVATE ${SAN})
+    target_link_options(seed_sim PRIVATE ${SAN})
 else()
     # The ASan runtime DLL is only on PATH inside a vcvars shell; put a copy next to the
     # executables so they also run from a plain prompt (tools/test_slp_py.py runs slp_examples).

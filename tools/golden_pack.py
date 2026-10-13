@@ -18,13 +18,17 @@ The weights are T3K-licensed: never commit anything under models/.
 import binascii
 import hashlib
 import json
+import os
 import struct
 import sys
 import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SEED = ROOT.parent / "reference" / "realtime-nam-seed3"
+# The realtime-nam-seed3 checkout (read only). SEED_REPO overrides the default layout, e.g.
+# SEED_REPO=~/amp/ref-seed3 on a Mac. No bytecode is written into it.
+SEED = Path(os.environ.get("SEED_REPO") or ROOT.parent / "reference" / "realtime-nam-seed3").expanduser()
+sys.dont_write_bytecode = True
 DOWNLOAD = ROOT / "models" / "download"
 GOLDEN = ROOT / "models" / "golden"
 

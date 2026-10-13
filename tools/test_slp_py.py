@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Cross-check tools/slp.py against the C protocol library.
 
-Builds nothing itself: run tools/run_host_tests.ps1 first (it builds build/host/slp_examples.exe).
+Builds nothing itself: run tools/run_host_tests.ps1 (Windows) or tools/run_host_tests.sh (macOS/Linux)
+first; they build build/host/slp_examples.
 For every example frame the C encoder printed, the Python decoder must accept it, and Python's
 encoder fed the same header and payload must produce the identical wire bytes. Also runs the
 Python framing through the same COBS vectors and a random round trip.
@@ -9,6 +10,7 @@ Python framing through the same COBS vectors and a random round trip.
     python tools/test_slp_py.py
 """
 
+import os
 import random
 import re
 import subprocess
@@ -19,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import slp  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
-EXE = ROOT / "build" / "host" / "slp_examples.exe"
+EXE = ROOT / "build" / "host" / ("slp_examples.exe" if os.name == "nt" else "slp_examples")
 
 
 def main():

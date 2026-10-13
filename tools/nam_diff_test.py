@@ -13,6 +13,7 @@ downloads from tools/golden_pack.py.
 import binascii
 import copy
 import json
+import os
 import random
 import struct
 import subprocess
@@ -21,10 +22,14 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT.parent / "reference" / "realtime-nam-seed3" / "scripts"))
+# The realtime-nam-seed3 checkout (read only). SEED_REPO overrides the default layout, e.g.
+# SEED_REPO=~/amp/ref-seed3 on a Mac. No bytecode is written into it.
+SEED = Path(os.environ.get("SEED_REPO") or ROOT.parent / "reference" / "realtime-nam-seed3").expanduser()
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(SEED / "scripts"))
 import convert_a2  # noqa: E402
 
-NAM_CHECK = ROOT / "build" / "host" / "nam_check.exe"
+NAM_CHECK = ROOT / "build" / "host" / ("nam_check.exe" if os.name == "nt" else "nam_check")
 SOURCE = ROOT / "models" / "download" / "Fender-a2-container.nam"
 
 

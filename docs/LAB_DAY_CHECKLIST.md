@@ -61,7 +61,21 @@ button. (Known cause: a PC opening the "USB" port within about a second of a res
 The Seed still prints its 1 Hz status line on its USB serial (`make monitor`). Note its DSP load
 before connecting anything (about 55 % with A2-Lite).
 
+> **Don't type into the Seed's console.** Its firmware treats keys as commands: `0`-`3` switch amps,
+> `C` toggles the cabinet, and `B` reboots it into the DFU bootloader. `tools/lab_day.py` only reads.
+
 ## 5. Link up
+
+Easiest: with both USB cables in the PC (the touchscreen's "USB" port and the Seed's USB), run
+
+```
+python tools/lab_day.py
+```
+
+It finds both ports, reads both consoles without sending anything, and prints a live checklist of
+the items below with the next thing to check. It also cross-checks the DSP load and model the
+touchscreen shows against the Seed's own status line. Logs go to `logs/lab_screen.txt` and
+`logs/lab_seed.txt`. (Use the ESP-IDF Python, which has pyserial.) By hand:
 
 Within a second of both running, the touchscreen console should show:
 - `seed_link: Seed HELLO: boot xxxxxxxx, fw "...", 48000 Hz / 48, 3 built-in models` (**not** "MOCK Seed")
