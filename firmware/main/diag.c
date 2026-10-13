@@ -305,7 +305,7 @@ static void stream_task(void *arg) {
                "\"seed\":{\"conn\":%s,\"tx\":%lu,\"rx\":%lu,\"err\":%lu,\"rtt\":%.2f,"
                "\"fw\":\"%s\",\"sr\":%lu,\"blk\":%u,\"cpu\":%.1f,\"nam\":\"%s\","
                "\"inpk\":%.1f,\"outpk\":%.1f,\"clips\":%lu,"
-               "\"mock\":%s,\"metv\":%s,\"ovr\":%lu,\"snaps\":%lu,\"snap_ok\":%u,\"dovr\":%lu}}\n",
+               "\"mock\":%s,\"metv\":%s,\"stv\":%s,\"ovr\":%lu,\"snaps\":%lu,\"snap_ok\":%u,\"dovr\":%lu}}\n",
                (unsigned long)d.uptime_s, d.reset_reason, esp_get_idf_version(), d.fw_version, d.fw_elf,
                cpu0, cpu1,
                (unsigned long)d.heap_free, (unsigned long)d.heap_min_free,
@@ -323,6 +323,7 @@ static void stream_task(void *arg) {
                s.dsp_fw_version, (unsigned long)s.sample_rate_hz, s.block_size, s.dsp_cpu_pct,
                s.nam_model, s.input_peak_dbfs, s.output_peak_dbfs, (unsigned long)s.clip_count,
                s.peer_mock ? "true" : "false", s.meters_valid ? "true" : "false",
+               s.status_valid ? "true" : "false",
                (unsigned long)s.uart_overruns, (unsigned long)s.snapshots_sent, s.snapshot_applied,
                (unsigned long)s.dsp_overruns);
     }

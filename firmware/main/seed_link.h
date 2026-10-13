@@ -25,6 +25,7 @@ typedef struct {
     // Added with the UART transport
     bool     peer_mock;          // the peer is tools/mock_seed.py: STATUS and METERS are simulated
     bool     meters_valid;       // a METERS frame arrived within the last second
+    bool     status_valid;       // a STATUS arrived since this Seed booted (else the DSP/model fields mean nothing)
     uint32_t peer_boot_id;
     uint32_t uart_overruns;      // bytes lost in the UART driver before the decoder saw them
     uint32_t snapshots_sent;

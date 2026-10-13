@@ -160,9 +160,15 @@ static void refresh(lv_timer_t *t) {
     else set_val(s_seed_vals[3], "press Ping SEED");
     set_val(s_seed_vals[4], "%s", s.dsp_fw_version);
     set_val(s_seed_vals[5], "%lu Hz / %u", (unsigned long)s.sample_rate_hz, s.block_size);
-    set_val(s_seed_vals[6], "%.1f %% (peak %.1f %%, %lu overruns)%s", s.dsp_cpu_pct, s.dsp_cpu_peak_pct,
-            (unsigned long)s.dsp_overruns, s.peer_mock ? " MOCK" : "");
-    set_val(s_seed_vals[7], "%s%s", s.nam_model[0] ? s.nam_model : "-", s.peer_mock ? " MOCK" : "");
+    // DSP load and model come only from the Seed's STATUS; until one arrives there is nothing to show.
+    if (s.status_valid) {
+        set_val(s_seed_vals[6], "%.1f %% (peak %.1f %%, %lu overruns)%s", s.dsp_cpu_pct, s.dsp_cpu_peak_pct,
+                (unsigned long)s.dsp_overruns, s.peer_mock ? " MOCK" : "");
+        set_val(s_seed_vals[7], "%s%s", s.nam_model[0] ? s.nam_model : "-", s.peer_mock ? " MOCK" : "");
+    } else {
+        set_val(s_seed_vals[6], "- (no STATUS from the Seed yet)");
+        set_dash(s_seed_vals[7]);
+    }
     if (s.meters_valid) {
         set_val(s_seed_vals[8], "%.1f dBFS%s", s.input_peak_dbfs, s.peer_mock ? " MOCK" : "");
         set_val(s_seed_vals[9], "%.1f dBFS%s", s.output_peak_dbfs, s.peer_mock ? " MOCK" : "");

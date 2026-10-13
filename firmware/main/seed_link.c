@@ -494,6 +494,19 @@ static void on_hello(const slp_frame_t *f) {
     snprintf(s_stats.dsp_fw_version, sizeof(s_stats.dsp_fw_version), "%s", h.fw_version);
     s_stats.sample_rate_hz = h.sample_rate_hz;
     s_stats.block_size = h.block_size;
+    if (is_new) {
+        // A new Seed boot: its counters restart from zero (a base kept from before would wrap
+        // them), and nothing the previous boot reported describes it until its first STATUS.
+        L->clip_base = L->overrun_base = 0;
+        s_stats.status_valid = false;
+        s_stats.dsp_cpu_pct = s_stats.dsp_cpu_peak_pct = 0;
+        s_stats.dsp_overruns = s_stats.clip_count = 0;
+        s_stats.status_flags = 0;
+        s_stats.active_kind = s_stats.active_builtin = 0;
+        s_stats.active_hash = 0;
+        s_stats.snapshot_applied = 0;
+        s_stats.nam_model[0] = '\0';
+    }
     portEXIT_CRITICAL(&s_mux);
 
     if (is_new) {
@@ -563,6 +576,7 @@ static void on_frame(const slp_frame_t *f) {
         s_stats.active_hash = st.model_hash;
         s_stats.snapshot_applied = st.applied_snapshot_id;
         memcpy(s_stats.nam_model, model, sizeof(model));
+        s_stats.status_valid = true;
         portEXIT_CRITICAL(&s_mux);
 
         // Fast healing: if the Seed hasn't confirmed the latest snapshot well after it went out,

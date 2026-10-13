@@ -696,6 +696,10 @@ static void amp_status_text(char *buf, size_t len) {
         snprintf(buf, len, "Amp bypassed: no model in the signal path%s.", mock);
         return;
     }
+    if (!s.status_valid) {
+        snprintf(buf, len, "Sent to the Seed; it hasn't reported its model yet%s.", mock);
+        return;
+    }
     amp_model_t am;
     const bool running = r->amp_sd_hash
         ? (s.active_kind == SLP_MODEL_UPLOADED && s.active_hash == r->amp_sd_hash)
