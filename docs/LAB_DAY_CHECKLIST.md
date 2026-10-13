@@ -6,9 +6,11 @@ you should see at each step. If a step's result differs, stop there: the notes s
 
 ## Before you go
 
-- [ ] Touchscreen firmware built from `feature/seed-link` and flashed (`idf.py -p COMx flash`).
-- [ ] Seed firmware with the receiver integrated (see [SEED_INTEGRATION_GUIDE.md](SEED_INTEGRATION_GUIDE.md)),
-      built and flashed by the Seed owner. Until then, steps 1 to 4 still work and step 5 shows
+- [ ] Touchscreen firmware built from `main` and flashed (`idf.py -p COMx flash`; on a Mac the
+      "USB" port is `/dev/cu.usbmodem*`, e.g. `/dev/cu.usbmodem1101`).
+- [ ] Seed firmware with the receiver integrated (see [SEED_FIRMWARE_REQUEST.md](SEED_FIRMWARE_REQUEST.md)
+      for the short version, [SEED_INTEGRATION_GUIDE.md](SEED_INTEGRATION_GUIDE.md) for the long one),
+      built and flashed by the Seed owner. As of 2026-10-13 `realtime-nam-seed3` has no UART link yet. Until then, steps 1 to 4 still work and step 5 shows
       "Not connected", which is the correct, honest result.
 - [ ] A 3-wire jumper cable (or a 4-wire one with pin 4 cut/removed), two USB-C cables, the
       microSD card with your `.nam` files in `/nam`.
@@ -24,6 +26,9 @@ you should see at each step. If a step's result differs, stop there: the notes s
 | pin 1 3V3: **leave empty** | pin 4 +5V: **leave empty** |
 
 > **Never a straight 4-wire cable: it joins the carrier's +5 V to the ESP32's 3.3 V rail.**
+
+A bare Seed (no carrier): Seed D13 (pin 14, TX) to H3 pin 3, Seed D14 (pin 15, RX) to H3 pin 4,
+Seed DGND (pin 40) to H3 pin 2. Nothing on H3 pin 1.
 
 ## 2. Switch and ports
 

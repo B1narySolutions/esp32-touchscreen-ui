@@ -7,7 +7,7 @@ Daisy Seed ("SEED3") running Neural Amp Modeler; that code lives in the team rep
 
 **Seed link docs:** [SEED_LINK_STATUS.md](SEED_LINK_STATUS.md) (what's verified where) |
 [SEED_LINK_PROTOCOL.md](SEED_LINK_PROTOCOL.md) (the wire format) |
-[SEED_INTEGRATION_GUIDE.md](SEED_INTEGRATION_GUIDE.md) (for the Seed owner) |
+[SEED_INTEGRATION_GUIDE.md](SEED_INTEGRATION_GUIDE.md) (for the Seed owner; short version: [SEED_FIRMWARE_REQUEST.md](SEED_FIRMWARE_REQUEST.md)) |
 [LAB_DAY_CHECKLIST.md](LAB_DAY_CHECKLIST.md) (bring-up with the real Seed) |
 [SEED_LINK_PLAN.md](SEED_LINK_PLAN.md) (design, baseline numbers, decisions).
 

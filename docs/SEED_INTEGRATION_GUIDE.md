@@ -66,9 +66,10 @@ real firmware has been run against it on a PC serial port (tests/host/seed_sim.c
 
 ## 4. UART with DMA (libDaisy)
 
-The libDaisy calls below follow its `UartHandler` API, but **the touchscreen team could not
-compile against your pinned libDaisy (`cc146d5`)**; check the names against
-`libs/libDaisy/src/per/uart.h` before relying on them.
+The libDaisy calls below were checked name by name against your pinned libDaisy (`cc146d5`:
+`per/uart.h`, `daisy_seed.h`, `daisy_core.h`) on 2026-10-13, including `seed::D13` = PB6 and
+`seed::D14` = PB7 (USART1, AF7). **They have not been compiled yet**: the touchscreen team has no
+ARM toolchain set up.
 
 ```cpp
 #include "daisy_seed.h"

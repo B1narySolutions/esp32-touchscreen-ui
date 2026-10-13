@@ -21,6 +21,8 @@ drop-in receiver code, `slp_receiver.c`).
 | microSD | FAT32/MBR card mounts; no card and wrong format are reported, never formatted. |
 | `.nam` conversion on the ESP32 | CRC32 of the three amps.json models on the device equals the Python reference: Fender 0066a5ae, Vox 3949448f, Marshall f737e066. Bad files rejected with clear reasons (wrong sample rate, A1 model, not JSON). Cache plus scan index: a boot with an unchanged card scans 6 files in 250 ms. |
 | SD Library UI | Lists accepted and rejected files at full width; selecting uploads and shows progress then "Running on the Seed". |
+| macOS build and flash (2026-10-13) | ESP-IDF 5.5.5 on a Mac, flashed over `/dev/cu.usbmodem*`. No Seed: `seed` conn false, rx 0, err 0; heap_min 49.0 KB; Test Mode "Not connected". Opening the native port resets the board (`rst` "usb"); it booted cleanly every time. |
+| Seed without STATUS (2026-10-13) | Against a PC stand-in that sends HELLO but no STATUS: Test Mode shows "- (no STATUS from the Seed yet)" instead of 0.0 %, DIAG `stv` false. On a Seed reboot the previous boot's DSP load, model and counters are cleared until its first STATUS. 0 link errors, 0 UART overruns. |
 
 ## Verified against the simulated Seed only (mock_seed.py / seed_sim)
 
