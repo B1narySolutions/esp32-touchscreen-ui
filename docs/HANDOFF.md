@@ -106,6 +106,7 @@ firmware/
     ui/                 screens and widgets (ui_main.c holds the main screen, SD Library, catalog)
 tools/                  capture_log, mock_seed, link_check, gen_params, golden_pack, nam_diff_test, ...
 tests/host/             host unit tests (MSVC + ASan), seed_sim, nam_check, slp_examples
+seed3-link-firmware/    build.sh / flash.sh: Rocco's Seed firmware + the link, rebuilt locally (no binary committed)
 ```
 
 ## Preview drift
