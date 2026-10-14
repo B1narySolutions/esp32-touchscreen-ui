@@ -1,10 +1,28 @@
 # Seed link status
 
-What is verified where, as of 2026-10-02. "Hardware" means the real touchscreen board; the
-real Daisy Seed3 has **not** been connected yet (its firmware needs the receiver first, see
-SEED_INTEGRATION_GUIDE.md). Two simulated Seeds stand in for it on the PC:
+What is verified where, as of 2026-10-13. "Hardware" means the real touchscreen board. The real
+Daisy Seed3 ran the link on 2026-10-13 with a test build (its firmware plus `seed3-link.patch`); the
+Seed repo itself doesn't have the receiver yet. Two simulated Seeds stand in for it on the PC:
 `tools/mock_seed.py` (Python, with fault injection) and `tests/host/seed_sim.c` (the Seed's own
 drop-in receiver code, `slp_receiver.c`).
+
+## Verified with the real Seed (2026-10-13)
+
+Bare Seed wired to H3 (D13, D14, DGND), SW1 on UART2, Seed running `realtime-nam-seed3` c3abe82 plus
+`seed3-link.patch`, both consoles read with `tools/lab_day.py`.
+
+| Item | Result |
+|---|---|
+| Handshake | Seed HELLO `fw "nam-a2", 48000 Hz / 48, 3 built-in models` (not MOCK), link up within about 1 s |
+| Link health | 0 decode errors and 0 UART overruns over the whole session, including touchscreen resets, a Seed reset and cable pulls |
+| Snapshots | All confirmed; with one wire off (touchscreen to Seed) the missing confirmations triggered resyncs every second, as designed |
+| Amp models | 5 of 5 card taps made the Seed print `>>> ... loaded` |
+| Mute | The Seed's OUT meter went to silence (-120 dBFS) while muted and back to its noise floor (about -91 dBFS) |
+| Telemetry | DSP load 57.2 % on the touchscreen, 57 % on the Seed's own console; meters show the real noise floor and react to touching the input pins |
+| Ping | 1.95 ms round trip |
+| Recovery | Seed reset: new HELLO and full resend at once. Cable pull: "link lost" / "link back" on both boards |
+| Seed audio | 0 overruns; DSP 57 % with the link vs 56 % without (about 3 us per block) |
+| libDaisy lock-up | Without the patch's error-interrupt fix, the touchscreen's boot message locked the Seed's main loop (no console, no USB). Fixed in the patch and verified |
 
 ## Verified on the touchscreen hardware
 
@@ -54,9 +72,9 @@ drop-in receiver code, `slp_receiver.c`).
 
 ## Not tested yet
 
-- **The real Seed** (needs the receiver integrated; see LAB_DAY_CHECKLIST.md): electrical link
-  over the H3 to J4 cable, real STATUS and METERS, model loading on the Seed, audio behaviour of
-  mute/volume, Seed DSP load with the receiver in its main loop.
+- **With the real Seed, still open:** listening to mute and MASTER with headphones (only the output
+  meter was checked), meters while playing a guitar, SD profile upload (the Seed side isn't written:
+  phase 2), the carrier's J4 cable (tested on a bare Seed), and the Seed repo integrating the patch.
 - **STEMMA QT encoders**: driver written (seesaw registers per Adafruit's library), untested;
   rotation direction and the 1 ms read delay need checking on hardware. Touch latency with
   knobs fitted not measured (the pot doesn't use I2C).

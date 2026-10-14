@@ -1,7 +1,7 @@
 # Request for the Seed firmware: talk to the touchscreen
 
 For the owner of `realtime-nam-seed3` (Rocco). Short version of
-[SEED_INTEGRATION_GUIDE.md](SEED_INTEGRATION_GUIDE.md), written against your `main` at `230eb74`.
+[SEED_INTEGRATION_GUIDE.md](SEED_INTEGRATION_GUIDE.md), written against your `main` at `c3abe82` (with your volume and tone knobs).
 Nothing in your repo has been changed; this is a proposal and you decide how it lands.
 
 ## Why
@@ -35,12 +35,23 @@ From your repo root, after step 1:
 git apply path/to/seed3-link.patch
 ```
 
-It applies cleanly to your `main` at `230eb74` and is `clang-format` clean with your `.clang-format`.
+It applies cleanly to your `main` at `c3abe82` and is `clang-format` clean with your `.clang-format`.
 
-**Build check (2026-10-13):** your firmware plus this patch compiles and links against your pinned
-libDaisy `cc146d5` with Arm GNU Toolchain 15.3.rel2, with no new warnings (the 8 newlib
-"not implemented" linker warnings are there without it too). Flash: 103,428 B (78.9 %) before,
-111,636 B (85.2 %) after, so the link costs about 8.2 KB. **It has not run on a Seed yet.**
+**Tested on a real Seed (2026-10-13, bare Seed, touchscreen wired to D13/D14/DGND).** Your firmware plus this
+patch compiles with no new warnings (Arm GNU 15.3.rel2, libDaisy `cc146d5`); flash goes from 108,700 B (82.9 %) to
+117,184 B (89.4 %). On the Seed: the link came up in about a second, every amp card loaded the amp (`>>> ... loaded`),
+mute took the output meter to silence, ping 1.95 ms, Seed reset and cable pulls recovered by themselves, 0 link
+errors, and your status line kept 0 overruns with DSP load 57 % (56 % without the patch). This was a test build on
+the team's Seed; your original firmware was read off it first, byte for byte, and goes back on after testing.
+Nothing in your repo was changed.
+
+**One thing you'd hit without the patch: a libDaisy UART lock-up.** On any line error (the touchscreen prints a
+115200-baud boot message on the same pin, which arrives as garbage at 1 Mbaud), libDaisy's `HAL_UART_ErrorCallback`
+leaves listen mode but keeps the IDLE interrupt enabled, and its `UART_IRQHandler` only clears the IDLE flag in
+listen mode. USART1 then interrupts forever and your main loop (and USB) stops: no status line, no answer to `B`,
+BOOT + RESET needed. The patch's `StartLinkListening()` turns the line-error interrupts off after
+`DmaListenStart` (a damaged byte still arrives and the protocol's CRC drops its frame), and `PollLink()` clears
+the error flags and restarts listening if it ever stopped. Keep that part if you write it differently.
 
 ### 1. Copy five files
 
@@ -165,7 +176,7 @@ static void InitLink() {
     uart.pin_config.tx = daisy::seed::D13;
     uart.pin_config.rx = daisy::seed::D14;
     link_uart.Init(uart);
-    link_uart.DmaListenStart(link_dma_buf, sizeof(link_dma_buf), OnLinkRx, nullptr);
+    StartLinkListening(); // DmaListenStart with line-error interrupts off; see the lock-up note above
 
     // The receiver: a new boot_id every boot tells the touchscreen to resend everything.
     daisy::Random::Init();
@@ -187,6 +198,13 @@ static void InitLink() {
 
 // Every main-loop pass: hand the received bytes to the receiver.
 static void PollLink() {
+    // Clear line-error flags left by damaged bytes, and listen again should reception ever stop.
+    USART1->ICR = USART_ICR_FECF | USART_ICR_NECF | USART_ICR_ORECF | USART_ICR_PECF;
+    if (!link_uart.IsListening()) {
+        link_uart.DmaListenStop();
+        StartLinkListening();
+    }
+
     uint8_t buf[256];
     size_t n = 0;
     uint32_t tail = ring_tail.load(std::memory_order_relaxed);
@@ -234,6 +252,10 @@ the `while (true)` loop next to `ApplyPendingAmpCommand`.
 - **The touchscreen wins over the USB keys.** It resends its full state every 5 s, so a `1`/`2`/`3`
   typed on the Seed's USB console is undone within 5 s while the touchscreen is connected.
 - **Link loss keeps the sound.** `OnLink(false)` should not mute or reset anything.
+- **Two volume controls.** The patch applies the touchscreen's MASTER after `audio.Process`, so it multiplies
+  with your volume knob. Decide whether that's what you want, or whether MASTER should drive `OutputControls`.
+- **Knobs on a bare Seed.** With nothing on A0/A1 your knob readings wander (53-100 % in our test), so the output
+  level changes by itself. On the carrier this doesn't happen.
 - **Phase 2, SD profiles:** the touchscreen can upload TONE3000 A2 models (7484 bytes, CRC-checked)
   from its SD card. That needs a staging buffer (`cfg.model_buf`) and loading the weights the way
   `CreateAmpModel` does; see section 6 of SEED_INTEGRATION_GUIDE.md. Until then, picking an SD

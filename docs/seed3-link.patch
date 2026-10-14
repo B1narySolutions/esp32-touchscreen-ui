@@ -3,7 +3,7 @@
 @@ -1,4 +1,5 @@
  TARGET = passthrough
 +C_SOURCES = src/link/seed_link_proto.c src/link/slp_receiver.c
- CPP_SOURCES = src/main.cpp src/audio/nam_processor.cpp src/audio/nam_audio.cpp src/audio/cab_filter.cpp src/models/amp_models.cpp src/models/a2_lite.cpp
+ CPP_SOURCES = src/main.cpp src/audio/nam_processor.cpp src/audio/nam_audio.cpp src/audio/cab_filter.cpp src/audio/output_controls.cpp src/models/amp_models.cpp src/models/a2_lite.cpp
  C_INCLUDES = -Isrc -Ibuild/generated
  CPP_STANDARD = -std=gnu++20
 --- a/src/main.cpp
@@ -44,8 +44,8 @@
 +static slp_receiver_t link_rx;
  // Only changed while audio is stopped.
  static bool bypass = false;
- static uint32_t ticks_per_us = 1; // Set in InitHardware after clocks are configured.
-@@ -33,6 +55,13 @@
+ // ADC channels for the carrier board's pots: volume (RV2) on Daisy pin 22
+@@ -36,6 +58,13 @@
      audio_callbacks.fetch_add(1, std::memory_order_relaxed);
  }
  
@@ -59,11 +59,10 @@
  void AudioCallback(daisy::AudioHandle::InputBuffer input_channels, daisy::AudioHandle::OutputBuffer output_channels, size_t frame_count) {
      // Measure in raw timer ticks: GetUs() wraps every ~17.9 s (2^32 ticks at
      // 240 MHz), so subtracting two GetUs() values across the wrap yields
-@@ -41,6 +70,25 @@
- 
+@@ -48,6 +77,25 @@
      // Left input in, same signal out on both channels.
      audio.Process(input_channels[0], output_channels[0], output_channels[1], frame_count, bypass);
-+
+ 
 +    // Ramp to the touchscreen's master gain across the block (no clicks; mute
 +    // reaches silence within one block) and record peaks for its meters.
 +    const float target = master_target.load(std::memory_order_relaxed);
@@ -82,13 +81,14 @@
 +        clip_count.fetch_add(1, std::memory_order_relaxed);
 +    RaisePeak(in_peak, in_max);
 +    RaisePeak(out_peak, out_max);
- 
++
      // Record how long the block took.
      const uint32_t elapsed_ticks = daisy::System::GetTick() - start_tick;
-@@ -83,6 +131,12 @@
-     uint32_t last_report_ms = 0;
-     bool led_on = false;
+     RecordCallbackTiming(elapsed_ticks / ticks_per_us);
+@@ -91,6 +139,12 @@
      uint32_t report_count = 0;
+     bool knobs_reported = false;
+     uint32_t reported_knob_percent[kKnobCount] = {};
 +    // Last measured block timing and overruns since boot, for the touchscreen's STATUS.
 +    uint32_t last_avg_us = 0;
 +    uint32_t last_max_us = 0;
@@ -98,7 +98,7 @@
  #ifdef A2_LITE_PROFILE
      uint32_t profile_blocks = 0;
      uint32_t input_mark = 0;
-@@ -215,6 +269,9 @@
+@@ -255,6 +309,9 @@
      const uint32_t avg_pct = avg_us * 100 / kBlockBudgetUs;
      const uint32_t peak_pct = max_us * 100 / kBlockBudgetUs;
      const int32_t headroom_us = static_cast<int32_t>(kBlockBudgetUs) - static_cast<int32_t>(max_us);
@@ -108,14 +108,27 @@
      const bool active = !bypass && state.model_ready;
  
      // Print the status line.
-@@ -226,10 +283,131 @@
-     if (state.report_count % 5 == 0)
-         ReportProfile(state);
+@@ -269,8 +326,152 @@
  #endif
-+}
-+
+ }
+ 
 +// UART DMA interrupt: copy bytes only. If the ring is full, drop them; the
 +// protocol resyncs.
++static void OnLinkRx(uint8_t *data, size_t size, void *, daisy::UartHandler::Result result);
++
++// Starts DMA reception with line-error interrupts off. libDaisy's error
++// callback leaves listen mode but keeps the IDLE interrupt enabled, and its
++// IRQ handler only clears the IDLE flag in listen mode, so a single framing
++// error (the touchscreen's 115200-baud boot banner arrives at 1 Mbaud) became
++// an endless USART1 interrupt that starved the main loop. Without the error
++// interrupts the DMA still delivers a damaged byte, and the protocol's CRC
++// drops the frame.
++static void StartLinkListening() {
++    link_uart.DmaListenStart(link_dma_buf, sizeof(link_dma_buf), OnLinkRx, nullptr);
++    USART1->CR3 &= ~USART_CR3_EIE;
++    USART1->CR1 &= ~USART_CR1_PEIE;
++}
++
 +static void OnLinkRx(uint8_t *data, size_t size, void *, daisy::UartHandler::Result result) {
 +    if (result != daisy::UartHandler::Result::OK)
 +        return;
@@ -147,8 +160,8 @@
 +static void OnMaster(void *, uint8_t volume, bool muted) {
 +    const float v = volume / 100.0f;
 +    master_target.store(muted ? 0.0f : v * v, std::memory_order_relaxed);
- }
- 
++}
++
 +// Same path as the USB keys: record the request; ApplyPendingAmpCommand does the switch.
 +static void OnSelectModel(void *, const slp_select_model_t *m, const uint8_t *) {
 +    if (m->kind == SLP_MODEL_BUILTIN && m->builtin_id >= 1 && m->builtin_id <= kAmpCount)
@@ -173,7 +186,7 @@
 +    uart.pin_config.tx = daisy::seed::D13;
 +    uart.pin_config.rx = daisy::seed::D14;
 +    link_uart.Init(uart);
-+    link_uart.DmaListenStart(link_dma_buf, sizeof(link_dma_buf), OnLinkRx, nullptr);
++    StartLinkListening();
 +
 +    // The receiver: a new boot_id every boot tells the touchscreen to resend everything.
 +    daisy::Random::Init();
@@ -195,6 +208,14 @@
 +
 +// Every main-loop pass: hand the received bytes to the receiver.
 +static void PollLink() {
++    // Clear line-error flags left by damaged bytes, and listen again should
++    // reception ever stop.
++    USART1->ICR = USART_ICR_FECF | USART_ICR_NECF | USART_ICR_ORECF | USART_ICR_PECF;
++    if (!link_uart.IsListening()) {
++        link_uart.DmaListenStop();
++        StartLinkListening();
++    }
++
 +    uint8_t buf[256];
 +    size_t n = 0;
 +    uint32_t tail = ring_tail.load(std::memory_order_relaxed);
@@ -238,9 +259,9 @@
      InitHardware();
 +    InitLink();
  
-     // Load the default amp and start audio.
+     // Load the default amp, start from where the knobs are, and start audio.
      AppState state;
-@@ -242,7 +420,9 @@
+@@ -285,7 +486,9 @@
          EnterBootloaderIfRequested();
          ApplyPendingAmpCommand(state);
          ApplyPendingCabinetCommand();

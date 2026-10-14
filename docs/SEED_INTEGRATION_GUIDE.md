@@ -68,9 +68,12 @@ real firmware has been run against it on a PC serial port (tests/host/seed_sim.c
 
 The libDaisy calls below were checked name by name against your pinned libDaisy (`cc146d5`:
 `per/uart.h`, `daisy_seed.h`, `daisy_core.h`) on 2026-10-13, including `seed::D13` = PB6 and
-`seed::D14` = PB7 (USART1, AF7). A version of this code compiles and links against `cc146d5`
-(2026-10-13, Arm GNU 15.3.rel2): see [SEED_FIRMWARE_REQUEST.md](SEED_FIRMWARE_REQUEST.md) and its
-ready patch. Not yet run on a Seed.
+`seed::D14` = PB7 (USART1, AF7). A version of this code ran on a real Seed on 2026-10-13: see
+[SEED_FIRMWARE_REQUEST.md](SEED_FIRMWARE_REQUEST.md) and its ready patch.
+
+> **Turn off the UART's line-error interrupts after `DmaListenStart`** (as below). Otherwise one framing error
+> (the touchscreen's 115200-baud boot message, a loose wire) makes libDaisy's error callback leave listen mode
+> with the IDLE interrupt still on, and USART1 interrupts forever: the main loop and USB stop.
 
 ```cpp
 #include "daisy_seed.h"
@@ -109,6 +112,8 @@ static void InitLink() {
     cfg.pin_config.rx = seed::D14;   // PB7
     link_uart.Init(cfg);
     link_uart.DmaListenStart(link_dma_buf, sizeof(link_dma_buf), LinkRx, nullptr);
+    USART1->CR3 &= ~USART_CR3_EIE;   // see the note above: no line-error interrupts
+    USART1->CR1 &= ~USART_CR1_PEIE;
 }
 ```
 

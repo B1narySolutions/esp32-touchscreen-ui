@@ -43,8 +43,12 @@ def find_port(vid, pid=None):
     return None
 
 
+REOPEN_GRACE_S = 1.5  # a board that reset: wait before opening (the touchscreen can hang if opened too soon)
+
+
 class Console(threading.Thread):
-    """Reads one port line by line into a log file and a list; never writes to it."""
+    """Reads one port line by line into a log file and a list; never writes to it. Reopens the
+    port when the board comes back after a reset or a replug."""
 
     def __init__(self, port, out):
         super().__init__(daemon=True)
@@ -54,32 +58,50 @@ class Console(threading.Thread):
         self.error = None
 
     def run(self):
-        try:
-            s = serial.Serial()
-            s.port, s.baudrate, s.timeout = self.port, 115200, 0.2
-            s.dtr = False  # opening with DTR/RTS asserted can reset a board through its auto-reset circuit
-            s.rts = False
-            s.open()
-        except serial.SerialException as e:
-            self.error = str(e)
-            return
-        buf = bytearray()
         with open(self.out, "wb") as sink:
+            first = True
             while True:
+                # Wait for the port, and give a board that just came back a moment to boot.
+                if not first:
+                    while not any(p.device == self.port for p in list_ports.comports()):
+                        time.sleep(0.2)
+                    time.sleep(REOPEN_GRACE_S)
+                first = False
                 try:
-                    chunk = s.read(4096)
+                    s = serial.Serial()
+                    s.port, s.baudrate, s.timeout = self.port, 115200, 0.2
+                    s.dtr = False  # opening with DTR/RTS asserted can reset a board through its auto-reset circuit
+                    s.rts = False
+                    s.open()
                 except serial.SerialException as e:
-                    self.error = str(e)
-                    return
-                if not chunk:
+                    self.error = f"{e} (retrying)"
+                    time.sleep(1)
                     continue
-                sink.write(chunk)
-                sink.flush()
-                buf += chunk
-                *done, rest = buf.split(b"\n")
-                buf = bytearray(rest)
-                with self.lock:
-                    self.lines += [d.decode("utf-8", "replace").rstrip("\r") for d in done]
+                if not self.lines and self.error:
+                    self.error = None
+                self.read_until_gone(s, sink)
+
+    def read_until_gone(self, s, sink):
+        buf = bytearray()
+        while True:
+            try:
+                chunk = s.read(4096)
+            except serial.SerialException as e:
+                self.error = f"{e} (the board reset or was unplugged; reopening when it's back)"
+                try:
+                    s.close()
+                except serial.SerialException:
+                    pass
+                return
+            if not chunk:
+                continue
+            sink.write(chunk)
+            sink.flush()
+            buf += chunk
+            *done, rest = buf.split(b"\n")
+            buf = bytearray(rest)
+            with self.lock:
+                self.lines += [d.decode("utf-8", "replace").rstrip("\r") for d in done]
 
     def take(self):
         with self.lock:
@@ -94,6 +116,7 @@ class State:
         self.hello = None         # last "Seed HELLO" log line from the touchscreen
         self.mock = False
         self.seed_status = None   # last parsed Seed status line
+        self.seed_status_at = 0.0  # when it arrived (time.monotonic)
         self.seed_link_up = None  # from the Seed's ">>> touchscreen link up/lost"
         self.seed_events = []     # other ">>> ..." lines from the Seed
         self.err_start = None
@@ -121,6 +144,7 @@ class State:
         m = SEED_STATUS.search(line)
         if m:
             self.seed_status = dict(mode=m[1], model=m[2], cab=m[3], avg=int(m[4]), peak=int(m[5]), overruns=int(m[6]))
+            self.seed_status_at = time.monotonic()
         elif ">>> touchscreen link" in line:
             self.seed_link_up = line.rstrip().endswith("up")
         elif ">>>" in line:
@@ -136,6 +160,18 @@ def checklist(st, have_seed_console):
     s = st.diag["seed"]
     age = time.monotonic() - st.started
     rows.append(("OK", f"touchscreen running: fw {st.diag.get('fw')}, up {st.diag['up']} s"))
+    # The Seed's own console works without the link, so it is shown from the start.
+    seed_fresh = st.seed_status is not None and time.monotonic() - st.seed_status_at < 3
+    if have_seed_console:
+        if st.seed_status and not seed_fresh:
+            rows.append(("..", f"Seed console: no status line for {time.monotonic() - st.seed_status_at:.0f} s "
+                               "(Seed resetting, or its USB unplugged)"))
+        elif st.seed_status:
+            ss = st.seed_status
+            rows.append(("OK", f"Seed console: [{ss['mode']} {ss['model']}] cab {ss['cab']}, DSP avg {ss['avg']} %, "
+                               f"peak {ss['peak']} %, overruns {ss['overruns']}"))
+        else:
+            rows.append(("..", "Seed console: waiting for its 1 Hz status line"))
 
     # 1. Bytes from the Seed at all.
     if s["rx"] == 0:
@@ -177,7 +213,7 @@ def checklist(st, have_seed_console):
     else:
         text = f"Seed STATUS: DSP {s['cpu']:.1f} %, model \"{s['nam']}\", Seed overruns {s['dovr']}"
         mark = "OK"
-        if st.seed_status:
+        if seed_fresh:
             seed_avg = st.seed_status["avg"]
             same_cpu = abs(s["cpu"] - seed_avg) <= 3
             text += f"  | Seed console: avg {seed_avg} %, [{st.seed_status['mode']} {st.seed_status['model']}]"
