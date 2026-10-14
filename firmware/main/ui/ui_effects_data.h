@@ -1,5 +1,6 @@
 #pragma once
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include "lvgl.h"
 #include "ui_theme.h"
@@ -50,6 +51,13 @@ enum {
 #define UI_CHAIN_MAX FX_CAB  // every effect except CAB can be in the chain
 
 extern const ui_effect_def_t g_effects[UI_EFFECT_COUNT];
+
+// A knob's label and value text. The AMP's five knobs are the selected amp's real controls
+// (seed-dsp/amp_controls.h: Fender VOLUME BASS MIDDLE TREBLE BRIGHT, Vox VOLUME BASS CUT TREBLE
+// MASTER, Marshall PREAMP BASS MIDDLE TREBLE PRESENCE, SD profiles GAIN BASS MIDDLE TREBLE LEVEL);
+// all at 50 (Bright off) is the capture as recorded. A switch shows OFF / ON (on at 50 and up).
+const char *ui_knob_label(uint8_t fx, uint8_t knob);
+void ui_knob_value_text(uint8_t fx, uint8_t knob, int32_t value, char *buf, size_t len);
 
 // Live knob values per effect, indexed [fx][knob], 0..100.
 extern int32_t g_knob_values[UI_EFFECT_COUNT][UI_MAX_KNOBS];

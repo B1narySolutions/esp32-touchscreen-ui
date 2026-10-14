@@ -331,11 +331,11 @@ Effect wire ids: gate = 1, comp = 2, eq = 3, drive = 4, amp = 5, octave = 6, cho
 | `0x0400` | `drive.gain` | 0 to 100 | Drive pedal gain (amount of clipping). | not yet implemented |
 | `0x0401` | `drive.tone` | 0 to 100 | Drive pedal tone (dark to bright). | not yet implemented |
 | `0x0402` | `drive.level` | 0 to 100 | Drive pedal output level. | not yet implemented |
-| `0x0500` | `amp.gain` | 0 to 100 | Amp input gain into the NAM model (drive). | not yet implemented |
-| `0x0501` | `amp.bass` | 0 to 100 | Amp tone stack bass (50 = flat). | not yet implemented |
-| `0x0502` | `amp.mid` | 0 to 100 | Amp tone stack middle (50 = flat). | not yet implemented |
-| `0x0503` | `amp.treble` | 0 to 100 | Amp tone stack treble (50 = flat). | not yet implemented |
-| `0x0504` | `amp.level` | 0 to 100 | Amp output level after the model. | not yet implemented |
+| `0x0500` | `amp.gain` | 0 to 100 | Amp knob 1: VOLUME (Fender, Vox), PREAMP (Marshall), GAIN (SD profile): drive into the NAM model (50 = as captured). | not yet implemented |
+| `0x0501` | `amp.bass` | 0 to 100 | Amp knob 2: BASS, through the amp's tone-stack circuit (50 = as captured). | not yet implemented |
+| `0x0502` | `amp.mid` | 0 to 100 | Amp knob 3: MIDDLE (Fender, Marshall, SD profile) or CUT (Vox: the power amp's top cut) (50 = as captured). | not yet implemented |
+| `0x0503` | `amp.treble` | 0 to 100 | Amp knob 4: TREBLE, through the amp's tone-stack circuit (50 = as captured). | not yet implemented |
+| `0x0504` | `amp.level` | 0 to 100 | Amp knob 5: BRIGHT switch (Fender, on at 50+), MASTER (Vox), PRESENCE (Marshall), LEVEL (SD profile) (50 = as captured; Bright off). | not yet implemented |
 | `0x0600` | `octave.mix` | 0 to 100 | Octave effect wet/dry mix. | not yet implemented |
 | `0x0601` | `octave.octUp` | 0 to 100 | Level of the octave-up voice. | not yet implemented |
 | `0x0602` | `octave.octDown` | 0 to 100 | Level of the octave-down voice. | not yet implemented |

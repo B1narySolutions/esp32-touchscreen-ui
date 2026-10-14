@@ -13,10 +13,16 @@ static uint8_t s_target_fx;
 static uint8_t s_target_knob;
 static volatile bool s_visible;
 
+static void set_value_text(int32_t value) {
+    char text[16];
+    ui_knob_value_text(s_target_fx, s_target_knob, value, text, sizeof(text));
+    lv_label_set_text(s_value_label, text);
+}
+
 static void apply_value(int32_t value) {
     value = value < 0 ? 0 : (value > 100 ? 100 : value);
     rig_set_knob(s_target_fx, s_target_knob, value, RIG_SRC_UI);
-    lv_label_set_text_fmt(s_value_label, "%d%%", (int)value);
+    set_value_text(value);
     lv_slider_set_value(s_slider, value, LV_ANIM_OFF);
     ui_main_on_knob_changed(s_target_fx, s_target_knob);
 }
@@ -139,14 +145,13 @@ void ui_vertical_slider_init(lv_obj_t *screen) {
 
 void ui_vertical_slider_show(uint8_t fx_index, uint8_t knob_index) {
     const ui_effect_def_t *def = &g_effects[fx_index];
-    const ui_knob_def_t *kd = &def->knobs[knob_index];
     int32_t value = g_knob_values[fx_index][knob_index];
 
     s_target_fx = fx_index;
     s_target_knob = knob_index;
 
-    lv_label_set_text(s_label, kd->label);
-    lv_label_set_text_fmt(s_value_label, "%d%%", (int)value);
+    lv_label_set_text(s_label, ui_knob_label(fx_index, knob_index));
+    set_value_text(value);
     lv_obj_set_style_text_color(s_value_label, def->color, 0);
     lv_slider_set_value(s_slider, value, LV_ANIM_OFF);
     lv_obj_set_style_bg_color(s_slider, def->color, LV_PART_INDICATOR);
@@ -171,6 +176,6 @@ bool ui_vertical_slider_target(uint8_t *fx_index, uint8_t *knob_index) {
 void ui_vertical_slider_refresh(void) {
     if (!s_visible) return;
     const int32_t value = g_knob_values[s_target_fx][s_target_knob];
-    lv_label_set_text_fmt(s_value_label, "%d%%", (int)value);
+    set_value_text(value);
     lv_slider_set_value(s_slider, value, LV_ANIM_OFF); // emits no VALUE_CHANGED: no echo
 }

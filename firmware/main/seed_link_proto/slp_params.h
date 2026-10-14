@@ -24,11 +24,11 @@
 #define SLP_P_DRIVE_GAIN           0x0400  /* Drive pedal gain (amount of clipping). */
 #define SLP_P_DRIVE_TONE           0x0401  /* Drive pedal tone (dark to bright). */
 #define SLP_P_DRIVE_LEVEL          0x0402  /* Drive pedal output level. */
-#define SLP_P_AMP_GAIN             0x0500  /* Amp input gain into the NAM model (drive). */
-#define SLP_P_AMP_BASS             0x0501  /* Amp tone stack bass (50 = flat). */
-#define SLP_P_AMP_MID              0x0502  /* Amp tone stack middle (50 = flat). */
-#define SLP_P_AMP_TREBLE           0x0503  /* Amp tone stack treble (50 = flat). */
-#define SLP_P_AMP_LEVEL            0x0504  /* Amp output level after the model. */
+#define SLP_P_AMP_GAIN             0x0500  /* Amp knob 1: VOLUME (Fender, Vox), PREAMP (Marshall), GAIN (SD profile): drive into the NAM model (50 = as captured). */
+#define SLP_P_AMP_BASS             0x0501  /* Amp knob 2: BASS, through the amp's tone-stack circuit (50 = as captured). */
+#define SLP_P_AMP_MID              0x0502  /* Amp knob 3: MIDDLE (Fender, Marshall, SD profile) or CUT (Vox: the power amp's top cut) (50 = as captured). */
+#define SLP_P_AMP_TREBLE           0x0503  /* Amp knob 4: TREBLE, through the amp's tone-stack circuit (50 = as captured). */
+#define SLP_P_AMP_LEVEL            0x0504  /* Amp knob 5: BRIGHT switch (Fender, on at 50+), MASTER (Vox), PRESENCE (Marshall), LEVEL (SD profile) (50 = as captured; Bright off). */
 #define SLP_P_OCTAVE_MIX           0x0600  /* Octave effect wet/dry mix. */
 #define SLP_P_OCTAVE_OCT_UP        0x0601  /* Level of the octave-up voice. */
 #define SLP_P_OCTAVE_OCT_DOWN      0x0602  /* Level of the octave-down voice. */

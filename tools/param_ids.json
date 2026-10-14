@@ -28,11 +28,11 @@
     "drive.tone":       { "id": "0x0401", "meaning": "Drive pedal tone (dark to bright)." },
     "drive.level":      { "id": "0x0402", "meaning": "Drive pedal output level." },
 
-    "amp.gain":         { "id": "0x0500", "meaning": "Amp input gain into the NAM model (drive)." },
-    "amp.bass":         { "id": "0x0501", "meaning": "Amp tone stack bass (50 = flat)." },
-    "amp.mid":          { "id": "0x0502", "meaning": "Amp tone stack middle (50 = flat)." },
-    "amp.treble":       { "id": "0x0503", "meaning": "Amp tone stack treble (50 = flat)." },
-    "amp.level":        { "id": "0x0504", "meaning": "Amp output level after the model." },
+    "amp.gain":         { "id": "0x0500", "meaning": "Amp knob 1: VOLUME (Fender, Vox), PREAMP (Marshall), GAIN (SD profile): drive into the NAM model (50 = as captured)." },
+    "amp.bass":         { "id": "0x0501", "meaning": "Amp knob 2: BASS, through the amp's tone-stack circuit (50 = as captured)." },
+    "amp.mid":          { "id": "0x0502", "meaning": "Amp knob 3: MIDDLE (Fender, Marshall, SD profile) or CUT (Vox: the power amp's top cut) (50 = as captured)." },
+    "amp.treble":       { "id": "0x0503", "meaning": "Amp knob 4: TREBLE, through the amp's tone-stack circuit (50 = as captured)." },
+    "amp.level":        { "id": "0x0504", "meaning": "Amp knob 5: BRIGHT switch (Fender, on at 50+), MASTER (Vox), PRESENCE (Marshall), LEVEL (SD profile) (50 = as captured; Bright off)." },
 
     "octave.mix":       { "id": "0x0600", "meaning": "Octave effect wet/dry mix." },
     "octave.octUp":     { "id": "0x0601", "meaning": "Level of the octave-up voice." },

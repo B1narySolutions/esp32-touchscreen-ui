@@ -59,6 +59,7 @@ static lv_obj_t *s_wifi_row, *s_ble_row, *s_seed_only_switch, *s_seed_only_knob;
 
 static void rebuild_rail(void);
 static void rebuild_panel(void);
+static void rebuild_knobs(void);
 static void update_cab_curve(void);
 static void apply_external_changes(void);
 static void seed_page_refresh(void);
@@ -612,7 +613,8 @@ static void model_card_cb(lv_event_t *e) {
     // Restyle in place rather than rebuild_panel(): that would delete the card whose CLICKED
     // event is still being dispatched.
     restyle_model_cards(fx);
-    for (uint8_t k = 0; k < def->knob_count; k++) ui_knob_set_value(lv_obj_get_child(s_knob_row, k), g_knob_values[fx][k]);
+    if (fx == FX_AMP) rebuild_knobs(); // another amp has other controls (the clicked card isn't in this row)
+    else for (uint8_t k = 0; k < def->knob_count; k++) ui_knob_set_value(lv_obj_get_child(s_knob_row, k), g_knob_values[fx][k]);
     if (fx == FX_CAB) update_cab_curve();
     ui_main_mark_dirty();
 }
@@ -748,6 +750,15 @@ static void refresh_amp_status(void) {
     if (strcmp(lv_label_get_text(s_amp_status), text) != 0) lv_label_set_text(s_amp_status, text);
 }
 
+// The knob row. The AMP's knobs are the selected amp's real controls, so its row is rebuilt
+// (labels and all) whenever the amp changes.
+static void rebuild_knobs(void) {
+    const ui_effect_def_t *def = &g_effects[s_selected_fx];
+    lv_obj_clean(s_knob_row);
+    const int32_t d = s_selected_fx == FX_CAB ? 104 : ui_knob_diameter_for(def->knob_count);
+    for (uint8_t k = 0; k < def->knob_count; k++) ui_knob_create(s_knob_row, s_selected_fx, k, d);
+}
+
 static void rebuild_panel(void) {
     const ui_effect_def_t *def = &g_effects[s_selected_fx];
 
@@ -768,12 +779,9 @@ static void rebuild_panel(void) {
         lv_obj_add_flag(s_amp_status, LV_OBJ_FLAG_HIDDEN);
     }
 
-    lv_obj_clean(s_knob_row);
-    const bool is_cab = s_selected_fx == FX_CAB;
-    const int32_t d = is_cab ? 104 : ui_knob_diameter_for(def->knob_count);
-    for (uint8_t k = 0; k < def->knob_count; k++) ui_knob_create(s_knob_row, s_selected_fx, k, d);
+    rebuild_knobs();
 
-    if (is_cab) {
+    if (s_selected_fx == FX_CAB) {
         update_cab_curve();
         lv_obj_clear_flag(s_curve_col, LV_OBJ_FLAG_HIDDEN);
     } else {
@@ -1260,7 +1268,10 @@ static void lib_row_cb(lv_event_t *e) {
     lv_obj_add_flag(s_lib_backdrop, LV_OBJ_FLAG_HIDDEN);
     // Rebuilding the AMP cards here is safe: the clicked row belongs to the popup, not the row.
     if (s_seed_only) seed_page_build_cards();
-    else if (s_selected_fx == FX_AMP) build_model_cards(&g_effects[FX_AMP]);
+    else if (s_selected_fx == FX_AMP) {
+        build_model_cards(&g_effects[FX_AMP]);
+        rebuild_knobs(); // an SD profile's knobs are the generic GAIN .. LEVEL
+    }
     refresh_amp_status();
 }
 
@@ -1697,6 +1708,7 @@ static void apply_external_changes(void) {
     if (dirty & RIG_DIRTY_FX) {
         refresh_all_chip_styles();
         restyle_model_cards(s_selected_fx);
+        if (s_selected_fx == FX_AMP && !s_seed_only) rebuild_knobs(); // the amp may have changed
     }
     if ((dirty & RIG_DIRTY_CHAIN) && !s_seed_only) rebuild_rail(); // rebuilt when the page closes
     // Master volume doesn't mark the rig EDITED on the touch path either.

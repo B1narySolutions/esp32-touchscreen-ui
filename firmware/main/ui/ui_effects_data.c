@@ -17,12 +17,12 @@ static const ui_knob_def_t k_cab[]     = { {"lowcut","LOW CUT"}, {"highcut","HIG
 
 // The Seed's built-in NAM amps, in its AmpId order (realtime-nam-seed3/models/amps.json); the
 // Seed's HELLO supplies the live names when connected. Amp profiles imported from the SD card
-// are appended at run time (rig/amp_models.c). The values are the UI knob positions each model
-// loads; the amp's tone knobs are not implemented on the Seed yet (docs/SEED_LINK_PROTOCOL.md).
+// are appended at run time (rig/amp_models.c). Each model loads its knobs at the capture's own
+// setting: 50 everywhere, Fender Bright off (see ui_knob_label for what each knob is per amp).
 static const ui_model_def_t m_amp[] = {
-    { "Fender Twin65",      "Fender Twin Reverb '65 reissue, clean headroom. NAM A2 capture.", { 25, 55, 50, 60, 60 } },
-    { "Vox AC30 Chimey",    "Vox AC30 Custom Classic, chimey top-boost breakup. NAM A2 capture.", { 45, 45, 60, 65, 62 } },
-    { "Marshall JCM800 G5", "Marshall JCM800 2203, classic rock crunch to lead. NAM A2 capture.", { 62, 55, 58, 68, 66 } },
+    { "Fender Twin65",      "Fender Twin Reverb '65 reissue, clean headroom. NAM A2 capture.", { 50, 50, 50, 50, 0 } },
+    { "Vox AC30 Chimey",    "Vox AC30 Custom Classic, chimey top-boost breakup. NAM A2 capture.", { 50, 50, 50, 50, 50 } },
+    { "Marshall JCM800 G5", "Marshall JCM800 2203, classic rock crunch to lead. NAM A2 capture.", { 50, 50, 50, 50, 50 } },
 };
 static const ui_model_def_t m_drive[] = {
     { "Tube Screamer",  "Mid-forward overdrive with a smooth, compressed clip.", { 45, 60, 60 } },
@@ -94,7 +94,7 @@ const int8_t g_default_knob_values[UI_EFFECT_COUNT][UI_MAX_KNOBS] = {
     [FX_COMP]    = { 45, 55, 25, 50, 50 },
     [FX_EQ]      = { 50, 50, 50, 60 },
     [FX_DRIVE]   = { 40, 60, 55 },
-    [FX_AMP]     = { 32, 50, 45, 71, 65 },
+    [FX_AMP]     = { 50, 50, 50, 50, 0 },
     [FX_OCTAVE]  = { 40, 30, 20 },
     [FX_CHORUS]  = { 35, 50, 40 },
     [FX_PHASER]  = { 35, 45, 35 },
@@ -109,7 +109,7 @@ int32_t g_knob_values[UI_EFFECT_COUNT][UI_MAX_KNOBS] = {
     [FX_COMP]    = { 45, 55, 25, 50, 50 },
     [FX_EQ]      = { 50, 50, 50, 60 },
     [FX_DRIVE]   = { 40, 60, 55 },
-    [FX_AMP]     = { 32, 50, 45, 71, 65 },
+    [FX_AMP]     = { 50, 50, 50, 50, 0 },
     [FX_OCTAVE]  = { 40, 30, 20 },
     [FX_CHORUS]  = { 35, 50, 40 },
     [FX_PHASER]  = { 35, 45, 35 },
@@ -193,3 +193,4 @@ const ui_ir_shape_t g_ir_shapes[] = {
     { 80, 6500, { { 3200, 6, .35f }, { 1200, -2, .6f }, { 120, 1, .6f } }, 3 },
     { 70, 8000, { { 2800, 3, .7f }, { 600, -1.5f, .7f } }, 2 },
 };
+

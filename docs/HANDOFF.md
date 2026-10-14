@@ -60,6 +60,9 @@ Firmware builds with **ESP-IDF v5.5.5**, flashed and running on the 7B.
   Seed, which ignores them until it implements them; bring each back to the full UI as it lands. Only
   master/mute, amp model and amp bypass act on the Seed with the proposed integration (the cabinet is
   never bypassed from the UI). Effects the Seed will never run are to be removed from the UI.
+- **Amp knobs are each amp's real controls** ([AMP_CONTROLS.md](AMP_CONTROLS.md)): Fender VOLUME BASS MIDDLE TREBLE
+  BRIGHT, Vox VOLUME BASS CUT TREBLE MASTER, Marshall PREAMP BASS MIDDLE TREBLE PRESENCE; all at 50 = the capture.
+  They change the sound in the Mac simulator (`tools/amp_sim`); the Seed build doesn't run them yet.
 - **Known non-functional controls:** the Wi-Fi and Bluetooth switches in Settings (and their top-bar
   dots) don't drive any radio yet (`TODO` in ui_main.c). Wire them up or remove them.
 
@@ -107,6 +110,8 @@ firmware/
 tools/                  capture_log, mock_seed, link_check, gen_params, golden_pack, nam_diff_test, ...
 tests/host/             host unit tests (MSVC + ASan), seed_sim, nam_check, slp_examples
 seed3-link-firmware/    build.sh / flash.sh: Rocco's Seed firmware + the link, rebuilt locally (no binary committed)
+seed-dsp/               amp_controls: each amp's real knobs (tone stacks etc.), for the simulator now and the Seed next
+tools/amp_sim/          the Seed's amp code on the Mac, played on its speakers, controlled by the real touchscreen
 ```
 
 ## Preview drift
