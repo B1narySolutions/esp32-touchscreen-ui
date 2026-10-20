@@ -4,8 +4,8 @@
 // and tone controls) on a simulated guitar, plays it on the Mac's speakers and records it, and
 // takes its orders over the link from the touchscreen exactly as the Seed build with the link does
 // (slp_receiver.c, the same master/mute ramp and model switching as docs/seed3-link.patch). The amp's
-// own knobs run seed-dsp/amp_controls: each amp's real controls around the capture; DELAY and
-// REVERB run seed-dsp/effects after the amp and cabinet. Every change
+// own knobs run seed-dsp/amp_controls: each amp's real controls around the capture; GATE, COMP,
+// DRIVE, CHORUS, DELAY and REVERB run seed-dsp/effects in the touchscreen's chain order. Every change
 // the touchscreen sends is printed with whether it changes the sound, how, and how long it took.
 //
 // The touchscreen labels everything it shows from here MOCK: the sound is the Seed's code, but the
@@ -30,6 +30,7 @@
 #include <cstring>
 #include <fcntl.h>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <poll.h>
 #include <random>
@@ -181,19 +182,11 @@ bool g_amp_knobs_seen = false;  // the touchscreen's first full set (its snapsho
 int g_amp_knob_updates = 0;
 double g_amp_switch_ms = -1e9; // knob values arriving with an amp switch are that amp's, not changes
 
-// Delay and reverb (seed-dsp/effects): set from the main thread, run in the audio thread after
-// the amp and cabinet, in the order the touchscreen's chain has them. Their memory would live in
-// the Seed's SDRAM.
-std::vector<float> g_delay_mem(fx::Delay::kMemFloats), g_reverb_mem(fx::Reverb::kMemFloats);
-fx::Delay g_delay;
-fx::Reverb g_reverb;
-std::atomic<bool> g_reverb_first{false};
-struct FxState {
-    bool on = false;
-    uint8_t model = 0;
-    int16_t knobs[4] = {};
-};
-FxState g_delay_state, g_reverb_state;
+// The effects (seed-dsp/effects: gate, comp, drive, chorus, delay, reverb): set from the main
+// thread, run in the audio thread in the touchscreen's chain order, pedals before the amp and the
+// rest after it, as on the Seed.
+std::vector<float> g_delay_mem(fx::Delay::kMemFloats), g_reverb_mem(fx::Reverb::kMemFloats), g_chorus_mem(fx::Chorus::kMemFloats);
+fx::Rig g_rig;
 
 // What the engine has applied, and when (for the latency lines).
 std::atomic<uint32_t> g_master_applied_gen{0}, g_amp_applied_gen{0};
@@ -224,8 +217,7 @@ void AddTo(std::atomic<double> &a, double v) {
 class Engine {
   public:
     explicit Engine(std::vector<float> wav) : wav_(std::move(wav)) {
-        g_delay.Init(g_delay_mem.data());
-        g_reverb.Init(g_reverb_mem.data());
+        g_rig.Init(g_delay_mem.data(), g_reverb_mem.data(), g_chorus_mem.data());
         audio_.LoadAmpModel(AmpId::Fender);
         audio_.SetKnobs(1.0f, 1.0f); // the carrier's volume and tone knobs, fully up
         audio_.ResetKnobs();
@@ -257,24 +249,20 @@ class Engine {
         for (int i = 0; i < kBlock; ++i)
             in[i] = wav_.empty() ? guitar_.Next() : wav_[wav_pos_++ % wav_.size()];
 
-        // The amp's drive, NamAudio, the amp's tone controls, then the touchscreen's master ramped
-        // across the block (docs/seed3-link.patch). On the Seed the tone controls belong between
-        // the model and the cabinet EQ; both are linear, so after the cabinet sounds the same.
+        // The pedals before the amp, the amp's drive, NamAudio, the amp's tone controls, the effects
+        // after the amp, then the touchscreen's master ramped across the block (docs/seed3-link.patch).
+        // On the Seed the tone controls belong between the model and the cabinet EQ; both are
+        // linear, so after the cabinet sounds the same.
         const auto t0 = std::chrono::steady_clock::now();
         float dry[kBlock];
         std::copy(in, in + kBlock, dry);
+        g_rig.ProcessPre(in, kBlock);
         if (!bypass_)
             g_ctl.ProcessPre(in, kBlock);
         audio_.Process(in, left, right, kBlock, bypass_);
         if (!bypass_)
             g_ctl.ProcessPost(left, kBlock);
-        if (g_reverb_first.load(std::memory_order_relaxed)) {
-            g_reverb.Process(left, kBlock);
-            g_delay.Process(left, kBlock);
-        } else {
-            g_delay.Process(left, kBlock);
-            g_reverb.Process(left, kBlock);
-        }
+        g_rig.ProcessPost(left, kBlock);
         const uint32_t master_gen = g_master_gen.load(std::memory_order_acquire);
         const float target = g_master_target.load(std::memory_order_relaxed);
         const float step = (target - gain_) / kBlock;
@@ -396,7 +384,7 @@ struct PendingLatency {
 std::vector<PendingLatency> g_pending;
 std::map<uint16_t, int16_t> g_params;          // last value per parameter
 std::map<uint16_t, int16_t> g_params_changed;  // changed since the last print
-std::map<uint16_t, int16_t> g_fx_params_changed; // delay / reverb knobs changed since the last print
+std::map<uint16_t, int16_t> g_fx_params_changed; // effect knobs changed since the last print
 std::map<int, std::pair<bool, int>> g_fx;      // fx -> (on, model)
 uint8_t g_master_volume = 255;
 bool g_muted = false;
@@ -462,37 +450,48 @@ void OnSelectModel(void *, const slp_select_model_t *m, const uint8_t *) {
     g_pending.push_back({NowMs(), gen, true, what});
 }
 
-const char *DelayModelName(uint8_t m) { return m == 1 ? "Tape Echo" : "Digital Delay"; }
-const char *ReverbModelName(uint8_t m) {
-    static const char *names[] = {"Hall", "Room", "Plate", "Spring"};
-    return m < 4 ? names[m] : "Hall";
+// The model names, as the touchscreen lists them.
+const char *ModelName(uint8_t fx, uint8_t m) {
+    static const char *drive[] = {"Tube Screamer", "Big Muff", "Klon-style", "Rat Distortion"};
+    static const char *chorus[] = {"Classic Chorus", "Dimension", "Ensemble"};
+    static const char *delay[] = {"Digital Delay", "Tape Echo"};
+    static const char *reverb[] = {"Hall", "Room", "Plate", "Spring"};
+    switch (fx) {
+    case SLP_FX_DRIVE: return m < 4 ? drive[m] : drive[0];
+    case SLP_FX_CHORUS: return m < 3 ? chorus[m] : chorus[0];
+    case SLP_FX_DELAY: return m < 2 ? delay[m] : delay[0];
+    case SLP_FX_REVERB: return m < 4 ? reverb[m] : reverb[0];
+    default: return "";
+    }
 }
-bool IsTimeFx(uint8_t fx) { return fx == SLP_FX_DELAY || fx == SLP_FX_REVERB; }
 
-// A delay or reverb knob in words, e.g. "TIME 60 (278 ms)".
+// An effect knob in words, e.g. "DELAY TIME 60 (278 ms)".
 std::string DescribeFxKnob(uint16_t id, int16_t v) {
-    char b[64];
+    char b[80];
+    const uint8_t drive = g_rig.Model(SLP_FX_DRIVE), chorus = g_rig.Model(SLP_FX_CHORUS);
     switch (id) {
+    case SLP_P_GATE_THRESH: snprintf(b, sizeof b, "GATE THRESHOLD %d (%.0f dBFS)", v, fx::Gate::ThresholdDb(v)); break;
+    case SLP_P_GATE_RANGE: snprintf(b, sizeof b, "GATE RANGE %d (-%.0f dB when closed)", v, fx::Gate::RangeDb(v)); break;
+    case SLP_P_COMP_THRESH: snprintf(b, sizeof b, "COMP THRESHOLD %d (%.0f dBFS)", v, fx::Compressor::ThresholdDb(v)); break;
+    case SLP_P_COMP_RATIO: snprintf(b, sizeof b, "COMP RATIO %d (%.1f:1)", v, fx::Compressor::Ratio(v)); break;
+    case SLP_P_COMP_GAIN: snprintf(b, sizeof b, "COMP GAIN %d (%+.0f dB)", v, fx::Compressor::MakeupDb(v)); break;
+    case SLP_P_DRIVE_GAIN: snprintf(b, sizeof b, "DRIVE GAIN %d (%.0f dB)", v, fx::Drive::GainDb(drive, v)); break;
+    case SLP_P_DRIVE_LEVEL: snprintf(b, sizeof b, "DRIVE LEVEL %d (%+.0f dB)", v, -30.0 + 0.4 * v); break;
+    case SLP_P_CHORUS_RATE: snprintf(b, sizeof b, "CHORUS RATE %d (%.2f Hz)", v, fx::Chorus::RateHz(chorus, v)); break;
+    case SLP_P_CHORUS_DEPTH: snprintf(b, sizeof b, "CHORUS DEPTH %d (+-%.1f ms)", v, fx::Chorus::DepthMs(chorus, v)); break;
     case SLP_P_DELAY_TIME: snprintf(b, sizeof b, "DELAY TIME %d (%.0f ms)", v, fx::Delay::TimeMs(v)); break;
     case SLP_P_DELAY_FEEDBACK: snprintf(b, sizeof b, "DELAY FEEDBACK %d (each repeat x%.2f)", v, fx::Delay::Feedback(v)); break;
-    case SLP_P_DELAY_TONE: snprintf(b, sizeof b, "DELAY TONE %d", v); break;
-    case SLP_P_DELAY_MIX: snprintf(b, sizeof b, "DELAY MIX %d", v); break;
     case SLP_P_REVERB_DECAY:
-        snprintf(b, sizeof b, "REVERB DECAY %d (%.1f s)", v, fx::Reverb::DecaySeconds(g_reverb_state.model, v));
+        snprintf(b, sizeof b, "REVERB DECAY %d (%.1f s)", v, fx::Reverb::DecaySeconds(g_rig.Model(SLP_FX_REVERB), v));
         break;
     case SLP_P_REVERB_PREDELAY: snprintf(b, sizeof b, "REVERB PRE-DELAY %d (%.0f ms)", v, fx::Reverb::PredelayMs(v)); break;
-    case SLP_P_REVERB_TONE: snprintf(b, sizeof b, "REVERB TONE %d", v); break;
-    case SLP_P_REVERB_MIX: snprintf(b, sizeof b, "REVERB MIX %d", v); break;
-    default: snprintf(b, sizeof b, "%s %d", ParamName(id), v);
+    default: {
+        std::string n = ParamName(id); // e.g. "DELAY_MIX"
+        std::replace(n.begin(), n.end(), '_', ' ');
+        snprintf(b, sizeof b, "%s %d", n.c_str(), v);
+    }
     }
     return b;
-}
-
-void ApplyTimeFx(uint8_t fx) {
-    if (fx == SLP_FX_DELAY)
-        g_delay.Set(g_delay_state.on, g_delay_state.model, g_delay_state.knobs);
-    else
-        g_reverb.Set(g_reverb_state.on, g_reverb_state.model, g_reverb_state.knobs);
 }
 
 void OnFx(void *, uint8_t fx, bool on, uint8_t model) {
@@ -501,15 +500,14 @@ void OnFx(void *, uint8_t fx, bool on, uint8_t model) {
         return;
     const bool first = it == g_fx.end();
     g_fx[fx] = {on, model};
-    if (IsTimeFx(fx)) {
-        FxState &st = fx == SLP_FX_DELAY ? g_delay_state : g_reverb_state;
-        st.on = on;
-        st.model = model;
-        ApplyTimeFx(fx);
+    if (fx::Rig::Runs(fx)) {
+        g_rig.SetFx(fx, on, model);
         if (!first) {
-            const char *name = fx == SLP_FX_DELAY ? DelayModelName(model) : ReverbModelName(model);
-            Event("UI  %s %s (%s)  -> changes the sound%s", FxName(fx), on ? "on" : "off", name,
-                  on ? "" : ": what's already ringing fades out naturally");
+            const char *name = ModelName(fx, model);
+            const bool trails = fx == SLP_FX_DELAY || fx == SLP_FX_REVERB;
+            Event("UI  %s %s%s%s%s  -> changes the sound (%s the amp)%s", FxName(fx), on ? "on" : "off", *name ? " (" : "", name,
+                  *name ? ")" : "", g_rig.BeforeAmp(fx) ? "before" : "after",
+                  !on && trails ? ": what's already ringing fades out naturally" : "");
         }
     } else if (fx == SLP_FX_CAB) {
         g_requested_cab = on;
@@ -521,26 +519,20 @@ void OnFx(void *, uint8_t fx, bool on, uint8_t model) {
 }
 
 void OnChain(void *, const uint8_t *fx, uint8_t len) {
-    static std::string last;
-    std::string s;
-    for (int i = 0; i < len; ++i)
-        s += std::string(i ? " > " : "") + FxName(fx[i]);
-    int delay_at = -1, reverb_at = -1;
+    static std::string last, last_running;
+    std::string s, running;
     for (int i = 0; i < len; ++i) {
-        if (fx[i] == SLP_FX_DELAY)
-            delay_at = i;
-        if (fx[i] == SLP_FX_REVERB)
-            reverb_at = i;
+        s += std::string(i ? " > " : "") + FxName(fx[i]);
+        if (fx::Rig::Runs(fx[i]) || fx[i] == SLP_FX_AMP)
+            running += std::string(running.empty() ? "" : " > ") + FxName(fx[i]);
     }
-    const bool reverb_first = reverb_at >= 0 && delay_at >= 0 && reverb_at < delay_at;
-    const bool swapped = reverb_first != g_reverb_first.load();
-    g_reverb_first = reverb_first;
+    g_rig.SetChain(fx, len);
     if (s != last && !last.empty())
         Event("UI  chain order: %s > CAB  -> %s", s.c_str(),
-              swapped ? (reverb_first ? "changes the sound: the delay now repeats the reverb"
-                                      : "changes the sound: the reverb now smooths the delay's repeats")
-                      : "no effect on the sound (delay and reverb kept their order; the other effects aren't on the Seed yet)");
+              running != last_running ? ("changes the sound: the Seed now runs " + running).c_str()
+                                      : "no effect on the sound (the effects the Seed runs kept their order)");
     last = s;
+    last_running = running;
 }
 
 bool IsAmpSlot(uint16_t id) { return id >= SLP_P_AMP_GAIN && id < SLP_P_AMP_GAIN + ampctl::kSlots; }
@@ -564,10 +556,8 @@ void OnParam(void *, uint16_t id, int16_t value) {
     const bool first = it == g_params.end();
     g_params[id] = value;
     const uint8_t fx = static_cast<uint8_t>(id >> 8);
-    if (IsTimeFx(fx) && (id & 0xFF) < 4) {
-        FxState &st = fx == SLP_FX_DELAY ? g_delay_state : g_reverb_state;
-        st.knobs[id & 0xFF] = value;
-        ApplyTimeFx(fx);
+    if (fx::Rig::Runs(fx) && (id & 0xFF) < fx::kMaxKnobs) {
+        g_rig.SetParam(id, value);
         if (!first)
             g_fx_params_changed[id] = value;
         return;
@@ -588,14 +578,16 @@ void SigInt(int) { g_quit = true; }
 // --demo: renders before/after clips of each amp control into one WAV (no touchscreen needed) and
 // measures what changed in the rendered audio, by band.
 
+struct DemoFx {
+    uint8_t fx = 0; // a link effect id; 0 none
+    uint8_t model = 0;
+    int16_t knobs[fx::kMaxKnobs] = {};
+};
 struct DemoClip {
     const char *title;
     int amp; // AmpId
     int16_t knobs[ampctl::kSlots];
-    int delay = 0; // 0 off, else the delay model + 1
-    int16_t dk[4] = {};
-    int reverb = 0; // 0 off, else the reverb model + 1
-    int16_t rk[4] = {};
+    DemoFx fx[2] = {};
 };
 
 // RMS level in three bands of a rendered clip (band-pass biquads), in dBFS.
@@ -645,13 +637,22 @@ int RunDemo(const std::string &dir) {
         {"Vox CUT 100 (dark)", 2, {50, 50, 100, 50, 50}},
         {"Marshall PRESENCE 0", 3, {50, 50, 50, 50, 0}},
         {"Marshall PRESENCE 100", 3, {50, 50, 50, 50, 100}},
-        {"Marshall + Digital Delay", 3, {50, 50, 50, 50, 50}, 1, {45, 38, 60, 35}},
-        {"Marshall + Tape Echo", 3, {50, 50, 50, 50, 50}, 2, {55, 50, 40, 38}},
-        {"Fender + Hall reverb", 1, {50, 50, 50, 50, 0}, 0, {}, 1, {65, 25, 55, 35}},
-        {"Fender + Room reverb", 1, {50, 50, 50, 50, 0}, 0, {}, 2, {25, 10, 50, 28}},
-        {"Fender + Plate reverb", 1, {50, 50, 50, 50, 0}, 0, {}, 3, {50, 15, 65, 32}},
-        {"Fender + Spring reverb", 1, {50, 50, 50, 50, 0}, 0, {}, 4, {35, 5, 45, 30}},
-        {"Vox + Digital Delay + Hall", 2, {50, 50, 50, 50, 50}, 1, {45, 38, 55, 30}, 1, {55, 20, 60, 30}},
+        {"Fender + Tube Screamer", 1, {50, 50, 50, 50, 0}, {{SLP_FX_DRIVE, 0, {45, 60, 60}}}},
+        {"Fender + Big Muff", 1, {50, 50, 50, 50, 0}, {{SLP_FX_DRIVE, 1, {75, 45, 50}}}},
+        {"Vox + Klon-style", 2, {50, 50, 50, 50, 50}, {{SLP_FX_DRIVE, 2, {30, 55, 65}}}},
+        {"Marshall + Rat", 3, {50, 50, 50, 50, 50}, {{SLP_FX_DRIVE, 3, {70, 50, 55}}}},
+        {"Fender VOLUME 0 (clean), no compressor", 1, {0, 50, 50, 50, 0}},
+        {"Fender VOLUME 0 + Compressor (sustain)", 1, {0, 50, 50, 50, 0}, {{SLP_FX_COMP, 0, {30, 80, 10, 40, 60}}}},
+        {"Marshall + Gate, THRESHOLD high (cuts the decay)", 3, {50, 50, 50, 50, 50}, {{SLP_FX_GATE, 0, {90, 5, 20, 85}}}},
+        {"Fender + Classic Chorus", 1, {50, 50, 50, 50, 0}, {{SLP_FX_CHORUS, 0, {35, 50, 40}}}},
+        {"Fender + Ensemble", 1, {50, 50, 50, 50, 0}, {{SLP_FX_CHORUS, 2, {55, 70, 50}}}},
+        {"Marshall + Digital Delay", 3, {50, 50, 50, 50, 50}, {{SLP_FX_DELAY, 0, {45, 38, 60, 35}}}},
+        {"Marshall + Tape Echo", 3, {50, 50, 50, 50, 50}, {{SLP_FX_DELAY, 1, {55, 50, 40, 38}}}},
+        {"Fender + Hall reverb", 1, {50, 50, 50, 50, 0}, {{SLP_FX_REVERB, 0, {65, 25, 55, 35}}}},
+        {"Fender + Room reverb", 1, {50, 50, 50, 50, 0}, {{SLP_FX_REVERB, 1, {25, 10, 50, 28}}}},
+        {"Fender + Plate reverb", 1, {50, 50, 50, 50, 0}, {{SLP_FX_REVERB, 2, {50, 15, 65, 32}}}},
+        {"Fender + Spring reverb", 1, {50, 50, 50, 50, 0}, {{SLP_FX_REVERB, 3, {35, 5, 45, 30}}}},
+        {"Vox + Digital Delay + Hall", 2, {50, 50, 50, 50, 50}, {{SLP_FX_DELAY, 0, {45, 38, 55, 30}}, {SLP_FX_REVERB, 0, {55, 20, 60, 30}}}},
     };
     constexpr int kClipSeconds = 3, kGapSeconds = 1;
     std::vector<int16_t> tour;
@@ -664,25 +665,27 @@ int RunDemo(const std::string &dir) {
         audio.ResetKnobs();
         ampctl::AmpControls ctl;
         ctl.Configure(ampctl::VoicingForAmpId(c.amp), c.knobs);
-        fx::Delay delay;
-        fx::Reverb reverb;
-        delay.Init(g_delay_mem.data());
-        reverb.Init(g_reverb_mem.data());
-        if (c.delay)
-            delay.Set(true, uint8_t(c.delay - 1), c.dk);
-        if (c.reverb)
-            reverb.Set(true, uint8_t(c.reverb - 1), c.rk);
+        auto rig_owner = std::make_unique<fx::Rig>(); // a fresh one per clip
+        fx::Rig &rig = *rig_owner;
+        rig.Init(g_delay_mem.data(), g_reverb_mem.data(), g_chorus_mem.data());
+        for (const DemoFx &f : c.fx) {
+            if (!f.fx)
+                continue;
+            rig.SetFx(f.fx, true, f.model);
+            for (int k = 0; k < fx::kMaxKnobs; ++k)
+                rig.SetParam(static_cast<uint16_t>(f.fx << 8 | k), f.knobs[k]);
+        }
         Guitar guitar; // the same strum every clip
         std::vector<float> out;
         float in[kBlock], left[kBlock], right[kBlock];
         for (int b = 0; b < kRate * kClipSeconds / kBlock; ++b) {
             for (float &v : in)
                 v = guitar.Next();
+            rig.ProcessPre(in, kBlock);
             ctl.ProcessPre(in, kBlock);
             audio.Process(in, left, right, kBlock, false);
             ctl.ProcessPost(left, kBlock);
-            delay.Process(left, kBlock);
-            reverb.Process(left, kBlock);
+            rig.ProcessPost(left, kBlock);
             for (float v : left)
                 out.push_back(std::clamp(v * 0.5f, -1.0f, 1.0f)); // master 70 (gain 0.49)
         }
@@ -867,13 +870,13 @@ int main(int argc, char **argv) {
                 next_params = now + 300;
             }
         }
-        // Delay and reverb knobs: grouped the same way, each in words.
+        // Effect knobs: grouped the same way, each in words.
         if (now >= next_params && !g_fx_params_changed.empty()) {
             std::string s;
             bool audible = false;
             for (auto &[id, v] : g_fx_params_changed) {
                 s += std::string(s.empty() ? "" : ", ") + DescribeFxKnob(id, v);
-                audible = audible || (id >> 8 == SLP_FX_DELAY ? g_delay_state.on : g_reverb_state.on);
+                audible = audible || g_rig.On(static_cast<uint8_t>(id >> 8));
             }
             Event("UI  %s  -> %s", s.c_str(), audible ? "changes the sound" : "no effect yet: that effect is off");
             g_fx_params_changed.clear();

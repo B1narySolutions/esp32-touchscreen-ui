@@ -65,7 +65,7 @@ index 5f4657e..63770e8 100644
      // Call with audio stopped. Turns the cabinet EQ after the model on or off
      // (it starts on) and clears its memory either way. The setting survives
 diff --git a/src/main.cpp b/src/main.cpp
-index 73d229c..5fb76a2 100644
+index 73d229c..f02a03d 100644
 --- a/src/main.cpp
 +++ b/src/main.cpp
 @@ -1,8 +1,14 @@
@@ -83,7 +83,7 @@ index 73d229c..5fb76a2 100644
  
  daisy::DaisySeed seed;
  static NamAudio audio;
-@@ -14,6 +20,50 @@ static std::atomic<uint32_t> requested_amp{1};
+@@ -14,6 +20,48 @@ static std::atomic<uint32_t> requested_amp{1};
  static std::atomic<bool> requested_cabinet{true};
  static std::atomic<bool> bootloader_requested{false};
  static_assert(ATOMIC_INT_LOCK_FREE == 2, "Audio counters must be lock-free");
@@ -93,19 +93,17 @@ index 73d229c..5fb76a2 100644
 +static std::atomic<float> master_target{1.0f};
 +static float master_gain = 1.0f; // Audio callback only.
 +
-+// Delay and reverb (touchscreen repo seed-dsp/effects), their memory in the SDRAM.
++// The effects (touchscreen repo seed-dsp/effects): gate, comp and drive before the amp model,
++// chorus, delay and reverb after it, in the touchscreen's chain order. The delay's 196 KB go in the
++// SDRAM (it reads one line); the reverb reads 12 lines every sample, too slow from the SDRAM (about
++// 75 us a block), so its 100 KB go in the DTCM (the stack keeps the top 28 KB); the chorus's 8 KB
++// in the ordinary RAM.
 +static float DSY_SDRAM_BSS delay_mem[fx::Delay::kMemFloats];
-+static float DSY_SDRAM_BSS reverb_mem[fx::Reverb::kMemFloats];
-+static fx::Delay delay;
-+static fx::Reverb reverb;
-+static std::atomic<bool> reverb_first{false};
-+struct FxState {
-+    bool on = false;
-+    uint8_t model = 0;
-+    int16_t knobs[4] = {};
-+};
-+static FxState delay_state, reverb_state; // main loop only (link callbacks, console keys)
-+static std::atomic<char> fx_key{0};       // console key for the effects, from the USB interrupt
++static float DTCM_MEM_SECTION reverb_mem[fx::Reverb::kMemFloats];
++static float chorus_mem[fx::Chorus::kMemFloats];
++static fx::Rig rig;
++static std::atomic<char> fx_key{0};               // console key for the effects, from the USB interrupt
++static std::atomic<bool> stm_dfu_requested{false}; // 'U': reboot into the STM32's DFU
 +static std::atomic<float> in_peak{0.0f};
 +static std::atomic<float> out_peak{0.0f};
 +static std::atomic<uint32_t> clip_count{0};
@@ -134,7 +132,7 @@ index 73d229c..5fb76a2 100644
  // Only changed while audio is stopped.
  static bool bypass = false;
  // ADC channels for the carrier board's pots: volume (RV2) on Daisy pin 22
-@@ -36,6 +86,13 @@ static void RecordCallbackTiming(uint32_t elapsed_us) {
+@@ -36,6 +84,13 @@ static void RecordCallbackTiming(uint32_t elapsed_us) {
      audio_callbacks.fetch_add(1, std::memory_order_relaxed);
  }
  
@@ -148,17 +146,20 @@ index 73d229c..5fb76a2 100644
  void AudioCallback(daisy::AudioHandle::InputBuffer input_channels, daisy::AudioHandle::OutputBuffer output_channels, size_t frame_count) {
      // Measure in raw timer ticks: GetUs() wraps every ~17.9 s (2^32 ticks at
      // 240 MHz), so subtracting two GetUs() values across the wrap yields
-@@ -47,6 +104,32 @@ void AudioCallback(daisy::AudioHandle::InputBuffer input_channels, daisy::AudioH
+@@ -45,8 +100,33 @@ void AudioCallback(daisy::AudioHandle::InputBuffer input_channels, daisy::AudioH
+     // Pass on the latest knob readings, which the ADC's DMA keeps current.
+     audio.SetKnobs(seed.adc.GetFloat(kVolumeKnob), seed.adc.GetFloat(kToneKnob));
  
-     // Left input in, same signal out on both channels.
-     audio.Process(input_channels[0], output_channels[0], output_channels[1], frame_count, bypass);
-+    if (reverb_first.load(std::memory_order_relaxed)) {
-+        reverb.Process(output_channels[0], frame_count);
-+        delay.Process(output_channels[0], frame_count);
-+    } else {
-+        delay.Process(output_channels[0], frame_count);
-+        reverb.Process(output_channels[0], frame_count);
-+    }
+-    // Left input in, same signal out on both channels.
+-    audio.Process(input_channels[0], output_channels[0], output_channels[1], frame_count, bypass);
++    // Left input in, through the pedals, the amp and the effects after it, same signal out on
++    // both channels (the master loop below copies it).
++    float pre[NamAudio::kBlockSize];
++    const size_t n = frame_count < NamAudio::kBlockSize ? frame_count : NamAudio::kBlockSize;
++    std::copy(input_channels[0], input_channels[0] + n, pre);
++    rig.ProcessPre(pre, n);
++    audio.Process(pre, output_channels[0], output_channels[1], n, bypass);
++    rig.ProcessPost(output_channels[0], n);
 +
 +    // Ramp to the touchscreen's master gain across the block (no clicks; mute
 +    // reaches silence within one block) and record peaks for its meters.
@@ -181,25 +182,42 @@ index 73d229c..5fb76a2 100644
  
      // Record how long the block took.
      const uint32_t elapsed_ticks = daisy::System::GetTick() - start_tick;
-@@ -57,7 +140,7 @@ void AudioCallback(daisy::AudioHandle::InputBuffer input_channels, daisy::AudioH
+@@ -57,7 +137,7 @@ void AudioCallback(daisy::AudioHandle::InputBuffer input_channels, daisy::AudioH
  // here.
  void OnUsbReceive(uint8_t *data, uint32_t *byte_count) {
      // '0'-'4' select bypass or an amp; 'C' toggles the cabinet; 'B' asks for
 -    // the DFU bootloader.
-+    // the DFU bootloader; 'D', 'R', 'S' toggle the delay, hall or spring reverb.
++    // the DFU bootloader; effect keys (see ApplyFxKey) toggle an effect.
      for (uint32_t i = 0; i < *byte_count; ++i) {
          if (data[i] >= '0' && data[i] <= '4')
              requested_amp.store(data[i] - '0', std::memory_order_relaxed);
-@@ -65,6 +148,8 @@ void OnUsbReceive(uint8_t *data, uint32_t *byte_count) {
+@@ -65,6 +145,12 @@ void OnUsbReceive(uint8_t *data, uint32_t *byte_count) {
              requested_cabinet.store(!requested_cabinet.load(std::memory_order_relaxed), std::memory_order_relaxed);
          else if (data[i] == 'B')
              bootloader_requested.store(true, std::memory_order_relaxed);
-+        else if (data[i] == 'D' || data[i] == 'd' || data[i] == 'R' || data[i] == 'r' || data[i] == 'S' || data[i] == 's')
++        else if (data[i] == 'U') {
++            stm_dfu_requested.store(true, std::memory_order_relaxed);
++            bootloader_requested.store(true, std::memory_order_relaxed);
++        }
++        else if (strchr("DRSGKOMHdrsgkomh", data[i]) && data[i])
 +            fx_key.store(static_cast<char>(data[i] & ~0x20), std::memory_order_relaxed);
      }
  }
  
-@@ -85,12 +170,21 @@ static void EnterBootloaderIfRequested() {
+@@ -79,18 +165,34 @@ static void EnterBootloaderIfRequested() {
+     seed.StopAudio();
+     seed.PrintLine(">>> rebooting into DFU bootloader");
+     seed.DelayMs(50); // Let the USB transfer finish before the reset.
++#ifdef BOOT_APP
++    // Run by the Daisy bootloader: 'B' goes back to it and it waits for a new app (in QSPI); 'U'
++    // goes to the STM32's own DFU, which can replace the bootloader itself (or restore a backup).
++    daisy::System::ResetToBootloader(stm_dfu_requested.load(std::memory_order_relaxed) ? daisy::System::BootloaderMode::STM
++                                                                                        : daisy::System::BootloaderMode::DAISY_INFINITE_TIMEOUT);
++#else
+     daisy::System::ResetToBootloader();
++#endif
+ }
+ 
  struct AppState {
      AmpId selected_amp = AmpId::Fender;
      uint32_t current_command = 1;
@@ -221,16 +239,16 @@ index 73d229c..5fb76a2 100644
  #ifdef A2_LITE_PROFILE
      uint32_t profile_blocks = 0;
      uint32_t input_mark = 0;
-@@ -140,7 +234,7 @@ static void ReportProfile(AppState &state) {
+@@ -140,7 +242,7 @@ static void ReportProfile(AppState &state) {
  }
  #endif
  
 -static void PrintHeader() { seed.PrintLine("--- NAM A2-Lite | %lu-sample blocks @ 48 kHz | budget %lu us/block | keys: 0=bypass 1=Twin65 2=AC30 3=JCM800 4=Princeton C=cab B=DFU ---", static_cast<unsigned long>(NamAudio::kBlockSize), static_cast<unsigned long>(kBlockBudgetUs)); }
-+static void PrintHeader() { seed.PrintLine("--- NAM A2-Lite | %lu-sample blocks @ 48 kHz | budget %lu us/block | keys: 0=bypass 1=Twin65 2=AC30 3=JCM800 4=Princeton C=cab D=delay R=hall S=spring B=DFU ---", static_cast<unsigned long>(NamAudio::kBlockSize), static_cast<unsigned long>(kBlockBudgetUs)); }
++static void PrintHeader() { seed.PrintLine("--- NAM A2-Lite | %lu-sample blocks @ 48 kHz | budget %lu us/block | keys: 0=bypass 1=Twin65 2=AC30 3=JCM800 4=Princeton C=cab G=gate K=comp O=drive M=fuzz H=chorus D=delay R=hall S=spring B=DFU ---", static_cast<unsigned long>(NamAudio::kBlockSize), static_cast<unsigned long>(kBlockBudgetUs)); }
  
  static void InitHardware() {
      seed.Init(true); // 480 MHz boost; the model needs the headroom.
-@@ -182,6 +276,7 @@ static void ApplyPendingAmpCommand(AppState &state) {
+@@ -182,6 +284,7 @@ static void ApplyPendingAmpCommand(AppState &state) {
      if (!bypass) {
          state.selected_amp = static_cast<AmpId>(command);
          state.model_ready = audio.LoadAmpModel(state.selected_amp);
@@ -238,7 +256,7 @@ index 73d229c..5fb76a2 100644
      }
      state.current_command = command;
  
-@@ -193,6 +288,31 @@ static void ApplyPendingAmpCommand(AppState &state) {
+@@ -193,6 +296,31 @@ static void ApplyPendingAmpCommand(AppState &state) {
          seed.PrintLine(">>> %s %s", AmpName(state.selected_amp), state.model_ready ? "loaded" : "FAILED to load");
  }
  
@@ -270,7 +288,7 @@ index 73d229c..5fb76a2 100644
  static void ApplyPendingCabinetCommand() {
      // Do nothing unless the USB handler has toggled the cabinet.
      const bool enabled = requested_cabinet.load(std::memory_order_relaxed);
-@@ -255,13 +375,16 @@ static void ReportStatus(AppState &state) {
+@@ -255,13 +383,16 @@ static void ReportStatus(AppState &state) {
      const uint32_t avg_pct = avg_us * 100 / kBlockBudgetUs;
      const uint32_t peak_pct = max_us * 100 / kBlockBudgetUs;
      const int32_t headroom_us = static_cast<int32_t>(kBlockBudgetUs) - static_cast<int32_t>(max_us);
@@ -288,7 +306,7 @@ index 73d229c..5fb76a2 100644
      ReportKnobs(state);
  #ifdef A2_LITE_PROFILE
      state.profile_blocks += callbacks;
-@@ -270,8 +393,226 @@ static void ReportStatus(AppState &state) {
+@@ -270,8 +401,206 @@ static void ReportStatus(AppState &state) {
  #endif
  }
  
@@ -361,61 +379,42 @@ index 73d229c..5fb76a2 100644
 +static void OnFx(void *, uint8_t fx, bool on, uint8_t model) {
 +    if (fx == SLP_FX_CAB)
 +        requested_cabinet.store(on, std::memory_order_relaxed);
-+    if (fx == SLP_FX_DELAY || fx == SLP_FX_REVERB) {
-+        FxState &s = fx == SLP_FX_DELAY ? delay_state : reverb_state;
-+        s.on = on;
-+        s.model = model;
-+        if (fx == SLP_FX_DELAY)
-+            delay.Set(s.on, s.model, s.knobs);
-+        else
-+            reverb.Set(s.on, s.model, s.knobs);
-+    }
++    rig.SetFx(fx, on, model); // ignores the effects it doesn't run
 +}
 +
-+// Console keys, for bench tests without the touchscreen: D toggles the delay (Digital), R the
-+// reverb (Hall), S the reverb (Spring), at the touchscreen's default settings for that model.
++static void OnParam(void *, uint16_t id, int16_t value) { rig.SetParam(id, value); }
++
++static void OnChain(void *, const uint8_t *fx, uint8_t len) { rig.SetChain(fx, len); }
++
++// Console keys, for bench tests without the touchscreen: each toggles one effect at the
++// touchscreen's default settings for that model.
 +static void ApplyFxKey() {
 +    const char key = fx_key.exchange(0, std::memory_order_relaxed);
-+    if (!key)
-+        return;
-+    static const int16_t kDelay[4] = {45, 38, 60, 35}, kHall[4] = {65, 25, 55, 35}, kSpring[4] = {35, 5, 45, 30};
-+    if (key == 'D') {
-+        delay_state.on = !delay_state.on;
-+        delay_state.model = fx::Delay::kDigital;
-+        memcpy(delay_state.knobs, kDelay, sizeof(kDelay));
-+        delay.Set(delay_state.on, delay_state.model, delay_state.knobs);
-+        seed.PrintLine(">>> delay (Digital) %s", delay_state.on ? "on" : "off");
-+        return;
++    struct Key {
++        char key;
++        uint8_t fx, model;
++        int16_t knobs[fx::kMaxKnobs];
++        const char *name;
++    };
++    static const Key kKeys[] = {
++        {'G', SLP_FX_GATE, 0, {35, 20, 40, 70}, "gate"},
++        {'K', SLP_FX_COMP, 0, {45, 55, 25, 50, 50}, "compressor"},
++        {'O', SLP_FX_DRIVE, 0, {45, 60, 60}, "drive (Tube Screamer)"},
++        {'M', SLP_FX_DRIVE, 1, {75, 45, 50}, "drive (Big Muff)"},
++        {'H', SLP_FX_CHORUS, 2, {55, 70, 50}, "chorus (Ensemble)"},
++        {'D', SLP_FX_DELAY, 0, {45, 38, 60, 35}, "delay (Digital)"},
++        {'R', SLP_FX_REVERB, 0, {65, 25, 55, 35}, "reverb (Hall)"},
++        {'S', SLP_FX_REVERB, 3, {35, 5, 45, 30}, "reverb (Spring)"},
++    };
++    for (const Key &k : kKeys) {
++        if (k.key != key)
++            continue;
++        const bool on = !(rig.On(k.fx) && rig.Model(k.fx) == k.model);
++        rig.SetFx(k.fx, on, k.model);
++        for (int i = 0; i < fx::kMaxKnobs; ++i)
++            rig.SetParam(static_cast<uint16_t>(k.fx << 8 | i), k.knobs[i]);
++        seed.PrintLine(">>> %s %s", k.name, on ? "on" : "off");
 +    }
-+    const uint8_t model = key == 'S' ? fx::Reverb::kSpring : fx::Reverb::kHall;
-+    reverb_state.on = !(reverb_state.on && reverb_state.model == model);
-+    reverb_state.model = model;
-+    memcpy(reverb_state.knobs, key == 'S' ? kSpring : kHall, sizeof(kHall));
-+    reverb.Set(reverb_state.on, reverb_state.model, reverb_state.knobs);
-+    seed.PrintLine(">>> reverb (%s) %s", key == 'S' ? "Spring" : "Hall", reverb_state.on ? "on" : "off");
-+}
-+
-+static void OnParam(void *, uint16_t id, int16_t value) {
-+    const uint8_t fx = static_cast<uint8_t>(id >> 8), knob = static_cast<uint8_t>(id & 0xFF);
-+    if ((fx != SLP_FX_DELAY && fx != SLP_FX_REVERB) || knob >= 4)
-+        return;
-+    FxState &s = fx == SLP_FX_DELAY ? delay_state : reverb_state;
-+    s.knobs[knob] = value;
-+    if (fx == SLP_FX_DELAY)
-+        delay.Set(s.on, s.model, s.knobs);
-+    else
-+        reverb.Set(s.on, s.model, s.knobs);
-+}
-+
-+static void OnChain(void *, const uint8_t *fx, uint8_t len) {
-+    int delay_at = -1, reverb_at = -1;
-+    for (int i = 0; i < len; ++i) {
-+        if (fx[i] == SLP_FX_DELAY)
-+            delay_at = i;
-+        if (fx[i] == SLP_FX_REVERB)
-+            reverb_at = i;
-+    }
-+    reverb_first.store(delay_at >= 0 && reverb_at >= 0 && reverb_at < delay_at, std::memory_order_relaxed);
 +}
 +
 +static void OnLink(void *, bool up) { seed.PrintLine(">>> touchscreen link %s", up ? "up" : "lost"); }
@@ -509,13 +508,12 @@ index 73d229c..5fb76a2 100644
 +
  int main() {
      InitHardware();
-+    delay.Init(delay_mem); // the SDRAM is up after seed.Init()
-+    reverb.Init(reverb_mem);
++    rig.Init(delay_mem, reverb_mem, chorus_mem); // the SDRAM is up after seed.Init()
 +    InitLink();
  
      // Load the default amp, start from where the knobs are, and start audio.
      AppState state;
-@@ -285,8 +626,12 @@ int main() {
+@@ -285,8 +614,12 @@ int main() {
      while (true) {
          EnterBootloaderIfRequested();
          ApplyPendingAmpCommand(state);

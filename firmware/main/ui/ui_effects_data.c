@@ -31,8 +31,8 @@ static const ui_model_def_t m_drive[] = {
     { "Rat Distortion", "Aggressive clipping with a gritty, raw edge.",          { 70, 50, 55 } },
 };
 static const ui_model_def_t m_chorus[] = {
-    { "Classic Chorus", "Lush stereo shimmer, the '80s studio staple.",                 { 35, 50, 40 } },
-    { "Dimension",      "Subtle width and depth without an obvious pitch wobble.",      { 20, 30, 35 } },
+    { "Classic Chorus", "Lush shimmer, the '80s studio staple.",                         { 35, 50, 40 } },
+    { "Dimension",      "Subtle depth without an obvious pitch wobble.",                { 20, 30, 35 } },
     { "Ensemble",       "Dense multi-voice modulation for a string-like swirl.",        { 55, 70, 50 } },
 };
 static const ui_model_def_t m_delay[] = {

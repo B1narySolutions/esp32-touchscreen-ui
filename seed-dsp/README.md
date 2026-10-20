@@ -7,5 +7,5 @@ audio path, no libDaisy), so the Mac simulator ([tools/amp_sim](../tools/amp_sim
 | File | What |
 |---|---|
 | `amp_controls.h/.cpp` | Each amp's real knobs around its NAM capture (drive, tone stack, Bright / Cut / Presence / Master). See [docs/AMP_CONTROLS.md](../docs/AMP_CONTROLS.md). |
-| `effects.h/.cpp` | DELAY (Digital, Tape) and REVERB (Hall, Room, Plate, Spring) for the touchscreen's knobs; memory supplied by the caller (SDRAM on the Seed). See [docs/EFFECTS.md](../docs/EFFECTS.md). |
-| `test_amp_controls.cpp`, `test_effects.cpp`, `test.sh` | Host tests: `bash seed-dsp/test.sh` (22 + 63 checks). |
+| `effects.h/.cpp` | The six effects for the touchscreen's knobs: GATE, COMP, DRIVE (Tube Screamer, Big Muff, Klon-style, Rat), CHORUS (Classic, Dimension, Ensemble), DELAY (Digital, Tape), REVERB (Hall, Room, Plate, Spring), and `Rig`, which runs them in the touchscreen's chain order. See [docs/EFFECTS.md](../docs/EFFECTS.md). |
+| `test_amp_controls.cpp`, `test_effects.cpp`, `test.sh` | Host tests: `bash seed-dsp/test.sh` (22 + 134 checks). |

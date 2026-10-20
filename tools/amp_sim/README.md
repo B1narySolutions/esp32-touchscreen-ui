@@ -2,7 +2,7 @@
 
 Runs Rocco's [realtime-nam-seed3](https://github.com/B1narySolutions/realtime-nam-seed3) audio code (the
 NAM amp captures, cabinet EQ, volume/tone code) plus [seed-dsp/amp_controls](../../seed-dsp/amp_controls.h) and
-the delay and reverb ([seed-dsp/effects](../../seed-dsp/effects.h))
+the six effects ([seed-dsp/effects](../../seed-dsp/effects.h): gate, comp, drive, chorus, delay, reverb)
 on a simulated guitar, plays it on the Mac's speakers, and takes its orders from the real touchscreen over
 the link, exactly as the Seed build with the link does (`slp_receiver.c`, same master/mute ramp and model
 switching). Every change the touchscreen sends is printed with whether it changes the sound, how (in dB),
@@ -31,8 +31,8 @@ bash tools/amp_sim/run.sh --demo
 afplay build/amp-sim/amp_demo.wav
 ```
 
-Renders 3-second before/after clips of every amp control, then delay and reverb clips (same strum each time),
-into one 96-second file
+Renders 3-second before/after clips of every amp control, then a clip of each effect (same strum each time),
+into one 132-second file
 and prints a table of the measured level in three bands per clip.
 
 ## What it prints
