@@ -167,6 +167,8 @@ static void load_saved_state(void) {
         len = sizeof(r);
         ESP_LOGI(TAG, "migrated saved rig from v1");
     }
+    // Ping-Pong (delay model 2) was removed: the output is mono, so it always played as Digital.
+    if (err == ESP_OK && len == sizeof(r) && r.model[FX_DELAY] == 2) r.model[FX_DELAY] = 0;
     if (err == ESP_OK && len == sizeof(r) && rig_is_valid(&r)) {
         rig_full_t full = { .r = { .chain_len = r.chain_len, .master_volume = r.master_volume,
                                    .amp_sd_hash = r.amp_sd_hash } };

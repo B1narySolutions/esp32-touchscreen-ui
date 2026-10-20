@@ -6,6 +6,14 @@ Seed repo itself doesn't have the receiver yet. Two simulated Seeds stand in for
 `tools/mock_seed.py` (Python, with fault injection) and `tests/host/seed_sim.c` (the Seed's own
 drop-in receiver code, `slp_receiver.c`).
 
+## SD amp profiles on the real Seed (2026-10-15)
+
+Second Seed3 (bare), `realtime-nam-seed3` 1636ef6 (four amps) plus `seed3-link.patch`: the HELLO lists 4 built-in
+amps and the UI shows them; picking "TONE3000 Vox AC30 Chimey (A2)" in the SD Library uploaded it and the Seed ran it
+(`>>> SD profile 3949448f loaded`, STATUS "uploaded 3949448f", DSP 56-57 %, 0 overruns, 0 link errors). Its CRC equals
+the Seed's embedded Vox weights' CRC, and on the host the upload path's output is identical sample for sample to the
+built-in path for all four amps, so the Seed runs the file's exact model. Not listened to (no audio hardware on hand).
+
 ## Verified with the real Seed (2026-10-13)
 
 Bare Seed wired to H3 (D13, D14, DGND), SW1 on UART2, Seed running `realtime-nam-seed3` c3abe82 plus
@@ -81,7 +89,7 @@ see [AMP_CONTROLS.md](AMP_CONTROLS.md). Not on the Seed yet.
 
 - **With the real Seed, still open:** listening to mute and MASTER with headphones (only the output
   meter was checked), meters while playing a guitar, SD profile upload (the Seed side isn't written:
-  phase 2), the carrier's J4 cable (tested on a bare Seed), and the Seed repo integrating the patch.
+  now done, see above; not yet a TONE3000 model that isn't also a built-in), and the Seed repo integrating the patch.
 - **STEMMA QT encoders**: driver written (seesaw registers per Adafruit's library), untested;
   rotation direction and the 1 ms read delay need checking on hardware. Touch latency with
   knobs fitted not measured (the pot doesn't use I2C).

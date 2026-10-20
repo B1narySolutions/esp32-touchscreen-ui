@@ -1,7 +1,8 @@
 # amp_sim: the Seed's amp on the Mac, controlled by the touchscreen
 
 Runs Rocco's [realtime-nam-seed3](https://github.com/B1narySolutions/realtime-nam-seed3) audio code (the
-three NAM amp captures, cabinet EQ, volume/tone code) plus [seed-dsp/amp_controls](../../seed-dsp/amp_controls.h)
+NAM amp captures, cabinet EQ, volume/tone code) plus [seed-dsp/amp_controls](../../seed-dsp/amp_controls.h) and
+the delay and reverb ([seed-dsp/effects](../../seed-dsp/effects.h))
 on a simulated guitar, plays it on the Mac's speakers, and takes its orders from the real touchscreen over
 the link, exactly as the Seed build with the link does (`slp_receiver.c`, same master/mute ramp and model
 switching). Every change the touchscreen sends is printed with whether it changes the sound, how (in dB),
@@ -30,7 +31,8 @@ bash tools/amp_sim/run.sh --demo
 afplay build/amp-sim/amp_demo.wav
 ```
 
-Renders 3-second before/after clips of every amp control (same strum each time) into one 68-second file
+Renders 3-second before/after clips of every amp control, then delay and reverb clips (same strum each time),
+into one 96-second file
 and prints a table of the measured level in three bands per clip.
 
 ## What it prints
@@ -39,7 +41,9 @@ and prints a table of the measured level in three bands per clip.
   24.509  UI  TREBLE 60 -> 50  -> changes the sound: +0.1 dB at 100 Hz, -1.0 at 500 Hz, -1.4 at 2.5 kHz, -1.4 at 5 kHz
   26.799  UI  AMP -> Marshall JCM800 G5  (its knobs: PREAMP BASS MIDDLE TREBLE PRESENCE)  -> changes the sound; in the audio 4.2 ms after arriving (includes loading the model)
   70.416  UI  MASTER 37 -> 30 (gain 0.09, -20.9 dB)  -> changes the sound; in the audio 3.9 ms after arriving
-          UI  DELAY on, model 0  -> no effect on the sound (the Seed has no DELAY yet)
+          UI  DELAY on (Digital Delay)  -> changes the sound
+          UI  DELAY TIME 60 (278 ms)  -> changes the sound
+          UI  CHORUS on, model 0  -> no effect on the sound (the Seed has no CHORUS yet)
    75.000  [Fender Twin65 VOLUME 25 BASS 55 MIDDLE 50 TREBLE 60 BRIGHT 60 | master 63 | cab on]  guitar -27.2 dBFS rms -> out -26.4 dBFS rms   link up
 ```
 

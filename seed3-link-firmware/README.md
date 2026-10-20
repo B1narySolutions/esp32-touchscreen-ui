@@ -1,7 +1,7 @@
 # Seed3 firmware with the touchscreen link
 
 Jacob's build of the Seed firmware: Rocco's [realtime-nam-seed3](https://github.com/B1narySolutions/realtime-nam-seed3)
-at `c3abe82` (with his volume and tone knobs), plus the touchscreen link ([../docs/seed3-link.patch](../docs/seed3-link.patch)
+at `1636ef6` (four amps, volume and tone knobs), plus the touchscreen link and SD amp profile uploads ([../docs/seed3-link.patch](../docs/seed3-link.patch)
 and the receiver in [../firmware/main/seed_link_proto/](../firmware/main/seed_link_proto/)). Rocco's repo is only cloned
 and never changed; this folder keeps a separate version that can be flashed whenever, until the link is merged there.
 
@@ -39,7 +39,11 @@ Bare Seed wired to the touchscreen's H3 "UART2" header (D13, D14, DGND; see
 [../docs/LAB_DAY_CHECKLIST.md](../docs/LAB_DAY_CHECKLIST.md)), SW1 on UART2:
 link up within about 1 s, amp cards switch the Seed's amp, mute silences its output, DSP load and meters are real
 (57 % DSP, 0 overruns), ping 1.95 ms, recovers from a Seed reset and a pulled cable. Full results:
-[../docs/SEED_LINK_STATUS.md](../docs/SEED_LINK_STATUS.md). Not done yet on the Seed side: SD profile uploads.
+[../docs/SEED_LINK_STATUS.md](../docs/SEED_LINK_STATUS.md). SD amp profiles (TONE3000 A2 files on the touchscreen's
+card) upload and run on the Seed since 2026-10-15; see [../docs/PDR_DEMO.md](../docs/PDR_DEMO.md).
+
+**Since 2026-10-19 the build also has the delay and reverb** ([../docs/EFFECTS.md](../docs/EFFECTS.md)): flash
+129,316 of 131,072 B (98.7 %), 296 KB of SDRAM. That version hasn't been run on a Seed yet; `build.sh` says so.
 
 ## Keeping it current
 

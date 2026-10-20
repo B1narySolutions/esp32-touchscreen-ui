@@ -1,7 +1,7 @@
 # Request for the Seed firmware: talk to the touchscreen
 
 For the owner of `realtime-nam-seed3` (Rocco). Short version of
-[SEED_INTEGRATION_GUIDE.md](SEED_INTEGRATION_GUIDE.md), written against your `main` at `c3abe82` (with your volume and tone knobs).
+[SEED_INTEGRATION_GUIDE.md](SEED_INTEGRATION_GUIDE.md), written against your `main` at `1636ef6` (four amps, with the Princeton; volume and tone knobs).
 Nothing in your repo has been changed; this is a proposal and you decide how it lands.
 
 ## Why
@@ -35,11 +35,19 @@ From your repo root, after step 1:
 git apply path/to/seed3-link.patch
 ```
 
-It applies cleanly to your `main` at `c3abe82` and is `clang-format` clean with your `.clang-format`.
+It applies cleanly to your `main` at `1636ef6` and is `clang-format` clean with your `.clang-format`.
+Besides `main.cpp` and `make/firmware.mk` it adds one method to `NamAudio`, `LoadUploadedModel(const float *weights)`:
+the same steps as `LoadAmpModel`, on uploaded weights instead of embedded ones.
 
-**Tested on a real Seed (2026-10-13, bare Seed, touchscreen wired to D13/D14/DGND).** Your firmware plus this
-patch compiles with no new warnings (Arm GNU 15.3.rel2, libDaisy `cc146d5`); flash goes from 108,700 B (82.9 %) to
-117,184 B (89.4 %). On the Seed: the link came up in about a second, every amp card loaded the amp (`>>> ... loaded`),
+**SD amp profiles work (2026-10-15, on a second Seed3).** With this patch on `1636ef6`, picking a TONE3000 A2
+profile in the touchscreen's SD Library uploads it (7484 bytes, CRC-checked) and the Seed runs it: `>>> SD profile
+3949448f loaded`, status line `[active SD profile]`, DSP 56-57 %, 0 overruns. That file is the same capture as your
+built-in Vox, and its CRC equals the CRC of your embedded Vox weights (3949448f); on the host, a model loaded through
+`LoadUploadedModel` gives output identical, sample for sample, to `LoadAmpModel` for all four amps. Flash: 116,408 B
+(88.8 %) without the patch, 125,484 B (95.7 %) with it.
+
+**Tested on a real Seed (2026-10-13, bare Seed, touchscreen wired to D13/D14/DGND), on `c3abe82`.** The patch
+compiled with no new warnings (Arm GNU 15.3.rel2, libDaisy `cc146d5`). On the Seed: the link came up in about a second, every amp card loaded the amp (`>>> ... loaded`),
 mute took the output meter to silence, ping 1.95 ms, Seed reset and cable pulls recovered by themselves, 0 link
 errors, and your status line kept 0 overruns with DSP load 57 % (56 % without the patch). This was a test build on
 the team's Seed; your original firmware was read off it first, byte for byte, and goes back on after testing.
@@ -157,7 +165,8 @@ static void OnSelectModel(void *, const slp_select_model_t *m, const uint8_t *) 
         requested_amp.store(m->builtin_id, std::memory_order_relaxed);
     else if (m->kind == SLP_MODEL_BYPASS)
         requested_amp.store(0, std::memory_order_relaxed);
-    // SLP_MODEL_UPLOADED (an SD profile): phase 2. Uploads are refused while model_buf is null.
+    // SLP_MODEL_UPLOADED (an SD profile): copied out of the receiver's staging buffer and loaded in
+    // the main loop with audio stopped (ApplyPendingUpload in the patch).
 }
 
 static void OnFx(void *, uint8_t fx, bool on, uint8_t) {
@@ -256,10 +265,13 @@ the `while (true)` loop next to `ApplyPendingAmpCommand`.
   with your volume knob. Decide whether that's what you want, or whether MASTER should drive `OutputControls`.
 - **Knobs on a bare Seed.** With nothing on A0/A1 your knob readings wander (53-100 % in our test), so the output
   level changes by itself. On the carrier this doesn't happen.
-- **Phase 2, SD profiles:** the touchscreen can upload TONE3000 A2 models (7484 bytes, CRC-checked)
-  from its SD card. That needs a staging buffer (`cfg.model_buf`) and loading the weights the way
-  `CreateAmpModel` does; see section 6 of SEED_INTEGRATION_GUIDE.md. Until then, picking an SD
-  profile on the touchscreen says "Upload failed ... Retrying" and the Seed keeps its amp.
+- **SD profiles:** the touchscreen uploads TONE3000 A2 models (7484 bytes, CRC-checked) from its SD card. The
+  receiver writes them into a staging buffer; a selected one is copied out at once and loaded in the main loop with
+  audio stopped (three 7.5 KB buffers: staging, pending, running, since `A2Lite` keeps pointers into its weights).
+  The touchscreen resends its state every 5 s; a profile that's already running isn't reloaded. After a Seed reboot
+  the touchscreen uploads the selected profile again by itself. The cabinet EQ applies to uploaded models.
+- **Built-in list:** HELLO's built-in amps are built from `AmpName()` for all `kAmpCount` amps, so adding an amp
+  needs no change here.
 
 ## How to check it with the touchscreen
 

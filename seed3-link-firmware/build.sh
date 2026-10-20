@@ -1,8 +1,9 @@
 #!/bin/bash
 # Builds Jacob's Seed3 firmware: Rocco's realtime-nam-seed3 at a pinned commit plus the touchscreen
-# link (docs/seed3-link.patch and the receiver in firmware/main/seed_link_proto/). Rocco's repo is
-# only cloned, never changed. Everything lands in build/seed3-link/ (git-ignored): the firmware
-# contains T3K-licensed model weights, so the binary is never committed.
+# link (docs/seed3-link.patch, the receiver in firmware/main/seed_link_proto/) and the delay and
+# reverb (seed-dsp/effects). Rocco's repo is only cloned, never changed. Everything lands in
+# build/seed3-link/ (git-ignored): the firmware contains T3K-licensed model weights, so the binary
+# is never committed.
 #
 #   bash seed3-link-firmware/build.sh
 #   ARM_GNU_BIN=/path/to/arm-gnu-toolchain/bin bash seed3-link-firmware/build.sh
@@ -14,10 +15,12 @@ root="$(cd "$here/.." && pwd)"
 work="$root/build/seed3-link"
 
 # Rocco's commit the patch is made for, and the toolchain release it was tested with.
-seed_commit=c3abe82872c1f2023f14521141fc0f29e897cb79
+seed_commit=1636ef6fc16e1d956022485711790b667f108dc3
 arm_release=15.3.rel2
-# SHA-256 of the binary this script produced and the Seed ran on 2026-10-13 (see README.md).
-tested_sha256=4fe3f8fce9b76ea6301f81176a7b98c11c6dff1e3c7d4a04d3501624ce222c14
+# SHA-256 of the binary this script produces for that commit once it has run on a real Seed (see
+# README.md). Empty: the current patch (with delay and reverb, 2026-10-19) hasn't been yet; the
+# last one tested on a Seed (link + SD uploads, no effects) was 1a83a529...
+tested_sha256=
 
 mkdir -p "$work"
 
@@ -50,10 +53,12 @@ if [[ ! -d "$work/realtime-nam-seed3/.git" ]]; then
     git clone -q https://github.com/B1narySolutions/realtime-nam-seed3.git "$work/realtime-nam-seed3"
 fi
 seed="$work/realtime-nam-seed3"
+# This clone is build.sh's own scratch copy (build/ is git-ignored): drop the last build's patch
+# before switching commits.
 git -C "$seed" fetch -q origin
-git -C "$seed" checkout -q --detach "$seed_commit"
-git -C "$seed" reset -q --hard "$seed_commit"
+git -C "$seed" reset -q --hard
 git -C "$seed" clean -q -fdx -e libs/ -e models/local/ -e build/
+git -C "$seed" checkout -q --detach "$seed_commit"
 
 # 3. libDaisy at the commit Rocco's install script pins, and the three amp models.
 daisy_commit=$(sed -n 's/^daisy_commit=//p' "$seed/scripts/install.sh")
@@ -62,13 +67,18 @@ if [[ ! -d "$seed/libs/libDaisy/.git" ]]; then
 fi
 git -C "$seed/libs/libDaisy" checkout -q --detach "$daisy_commit"
 git -C "$seed/libs/libDaisy" submodule update -q --init --recursive
-if [[ ! -f "$seed/models/local/marshall-jcm800-g5-a2-lite.nam" ]]; then
+missing=0
+for name in $(cd "$seed" && python3 -B scripts/convert_a2.py names); do
+    [[ -f "$seed/models/local/$name.nam" ]] || missing=1
+done
+if [[ $missing -eq 1 ]]; then
     (cd "$seed" && bash scripts/download_models.sh)
 fi
 
-# 4. The link: the receiver files from this repo, then the patch.
-mkdir -p "$seed/src/link"
+# 4. The link: the receiver files and the effects (delay, reverb) from this repo, then the patch.
+mkdir -p "$seed/src/link" "$seed/src/fx"
 cp "$root"/firmware/main/seed_link_proto/{seed_link_proto.h,seed_link_proto.c,slp_receiver.h,slp_receiver.c,slp_params.h} "$seed/src/link/"
+cp "$root"/seed-dsp/{effects.h,effects.cpp} "$seed/src/fx/"
 git -C "$seed" apply "$root/docs/seed3-link.patch"
 
 # 5. Build (libDaisy at -Os, the firmware at -O3, as Rocco's Makefile does).
@@ -80,8 +90,10 @@ cp "$seed/build/passthrough.elf" "$work/seed3-link.elf"
 # 6. Say whether this is the exact binary tested on the Seed.
 sha=$(shasum -a 256 "$work/seed3-link.bin" | cut -d' ' -f1)
 echo "Built $work/seed3-link.bin ($sha)"
-if [[ "$sha" == "$tested_sha256" ]]; then
-    echo "Identical to the binary tested on the Seed on 2026-10-13."
+if [[ -z "$tested_sha256" ]]; then
+    echo "Note: this version of the patch hasn't been run on a Seed yet."
+elif [[ "$sha" == "$tested_sha256" ]]; then
+    echo "Identical to the binary tested on a Seed."
 else
-    echo "Note: differs from the binary tested on 2026-10-13 (a different compiler or a changed receiver/patch)."
+    echo "Note: differs from the binary tested on a Seed (a different compiler or a changed receiver/patch)."
 fi

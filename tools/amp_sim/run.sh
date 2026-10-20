@@ -15,7 +15,7 @@ work="$root/build/amp-sim"
 seed_commit=$(sed -n 's/^seed_commit=//p' "$root/seed3-link-firmware/build.sh")
 mkdir -p "$work"
 
-# 1. Rocco's code at the pinned commit, and the three amp models baked into a header.
+# 1. Rocco's code at the pinned commit, and its amp models baked into a header.
 seed="$work/realtime-nam-seed3"
 if [[ ! -d "$seed/.git" ]]; then
     git clone -q https://github.com/B1narySolutions/realtime-nam-seed3.git "$seed"
@@ -24,11 +24,19 @@ if [[ "$(git -C "$seed" rev-parse HEAD)" != "$seed_commit" ]]; then
     git -C "$seed" fetch -q origin
     git -C "$seed" checkout -q --detach "$seed_commit"
 fi
-if [[ ! -f "$seed/models/local/marshall-jcm800-g5-a2-lite.nam" ]]; then
+missing=0
+for name in $(cd "$seed" && python3 -B scripts/convert_a2.py names); do
+    [[ -f "$seed/models/local/$name.nam" ]] || missing=1
+done
+if [[ $missing -eq 1 ]]; then
     (cd "$seed" && bash scripts/download_models.sh)
 fi
-if [[ ! -f "$seed/build/generated/embedded_a2_data.h" ]]; then
+# The header is generated per commit (its amps change with models/amps.json).
+gen="$seed/build/generated"
+if [[ ! -f "$gen/embedded_a2_data.h" || "$(cat "$gen/.commit" 2>/dev/null)" != "$seed_commit" ]]; then
     (cd "$seed" && python3 -B scripts/convert_a2.py header build/generated/embedded_a2_data.h)
+    echo "$seed_commit" > "$gen/.commit"
+    rm -f "$work/amp_sim"
 fi
 
 # 2. Parameter names for the console, from the generated id header.
@@ -48,12 +56,13 @@ PY
 src="$seed/src"
 dsp="$root/seed-dsp"
 if [[ ! -x "$work/amp_sim" || "$root/tools/amp_sim/amp_sim.cpp" -nt "$work/amp_sim" || "$proto/slp_receiver.c" -nt "$work/amp_sim" \
-      || "$dsp/amp_controls.cpp" -nt "$work/amp_sim" || "$dsp/amp_controls.h" -nt "$work/amp_sim" ]]; then
+      || "$dsp/amp_controls.cpp" -nt "$work/amp_sim" || "$dsp/amp_controls.h" -nt "$work/amp_sim" \
+      || "$dsp/effects.cpp" -nt "$work/amp_sim" || "$dsp/effects.h" -nt "$work/amp_sim" ]]; then
     echo "Building amp_sim..."
     clang -std=c99 -O2 -c "$proto/seed_link_proto.c" -o "$work/seed_link_proto.o"
     clang -std=c99 -O2 -c "$proto/slp_receiver.c" -I"$proto" -o "$work/slp_receiver.o"
     clang++ -std=c++20 -O2 -Wall -I"$src" -I"$seed/build/generated" -I"$proto" -I"$work" -I"$dsp" \
-        "$root/tools/amp_sim/amp_sim.cpp" "$dsp/amp_controls.cpp" "$src/audio/nam_audio.cpp" "$src/audio/cab_filter.cpp" \
+        "$root/tools/amp_sim/amp_sim.cpp" "$dsp/amp_controls.cpp" "$dsp/effects.cpp" "$src/audio/nam_audio.cpp" "$src/audio/cab_filter.cpp" \
         "$src/audio/output_controls.cpp" "$src/audio/nam_processor.cpp" "$src/models/amp_models.cpp" \
         "$src/models/a2_lite.cpp" "$work/seed_link_proto.o" "$work/slp_receiver.o" \
         -framework AudioToolbox -framework CoreFoundation -o "$work/amp_sim"

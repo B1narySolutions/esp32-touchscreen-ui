@@ -38,7 +38,7 @@ static const ui_model_def_t m_chorus[] = {
 static const ui_model_def_t m_delay[] = {
     { "Digital Delay", "Clean, precise repeats with no character added.",            { 45, 38, 60, 35 } },
     { "Tape Echo",     "Warm, saturated echoes that degrade slightly each repeat.",  { 55, 50, 40, 38 } },
-    { "Ping-Pong",     "Repeats alternate left/right for a wide stereo bounce.",     { 40, 45, 55, 40 } },
+    // No Ping-Pong: it needs stereo, and the amp's output is mono.
 };
 static const ui_model_def_t m_reverb[] = {
     { "Hall",   "Large, spacious decay for orchestral-scale ambience.",       { 65, 25, 55, 35 } },

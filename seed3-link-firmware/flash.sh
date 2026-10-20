@@ -55,6 +55,7 @@ echo "Backed up the Seed to $backup"
 
 # 3. Flash and restart. dfu-util reports an error after a good flash on this chip (the STM32 resets
 #    on :leave before answering), so success is judged by the download line, as Rocco's Makefile does.
-dfu-util -d 0483:df11 -a 0 -s 0x08000000:leave -D "$image" 2>&1 | tee "$work/flash.log" | grep -E 'Download|downloaded' | tail -1
+{ dfu-util -d 0483:df11 -a 0 -s 0x08000000:leave -D "$image" || true; } > "$work/flash.log" 2>&1
+grep -E 'downloaded' "$work/flash.log" | tail -1 || true
 grep -q 'File downloaded successfully' "$work/flash.log" || { echo "Flash failed; see $work/flash.log" >&2; exit 1; }
 echo "Flashed $image. To undo: bash seed3-link-firmware/flash.sh --restore $backup"
