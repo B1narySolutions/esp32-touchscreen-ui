@@ -50,8 +50,11 @@ Firmware builds with **ESP-IDF v5.5.5**, flashed and running on the 7B.
   profiles from the SD card (SD Library popup). `.nam` conversion is an exact port of
   `convert_a2.py` (byte-identical); profiles upload to the Seed with CRC check and re-upload
   automatically after a Seed reboot.
-- **Physical knobs**: a 10k pot on J8 works as master volume (stand-in). Driver for two Adafruit
-  STEMMA QT encoders is written but untested (hardware not here yet); enable it in menuconfig.
+- **Physical knobs** use two Adafruit 5880 STEMMA QT encoders by default. Leave the master at
+  `0x36` and close A0 on the parameter board for `0x37`. Master rotation preserves mute and its
+  button toggles mute. The parameter knob adjusts the open slider and its button is unused.
+  For an existing `sdkconfig`, enable encoders and select **Unused** for GPIO6 under
+  **Physical knobs**. That uses four-wire polling. The 10k pot remains an option in that menu.
 - No fake data anywhere: anything from the simulated Seed is labelled MOCK on screen.
 - **Seed controls only** (Settings switch, saved): replaces the effects rail and panel with one page
   holding only what the Seed acts on today (amp model incl. SD profiles, amp on/bypass; master and

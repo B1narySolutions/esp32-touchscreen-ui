@@ -1,4 +1,5 @@
 #include "ui_vertical_slider.h"
+#include "amp_encoder.h"
 #include "ui_effects_data.h"
 #include "ui_theme.h"
 #include "ui_main.h"
@@ -11,7 +12,7 @@ static lv_obj_t *s_value_label;
 static lv_obj_t *s_slider;
 static uint8_t s_target_fx;
 static uint8_t s_target_knob;
-static volatile bool s_visible;
+static bool s_visible;
 
 static void set_value_text(int32_t value) {
     char text[16];
@@ -159,11 +160,13 @@ void ui_vertical_slider_show(uint8_t fx_index, uint8_t knob_index) {
 
     lv_obj_clear_flag(s_backdrop, LV_OBJ_FLAG_HIDDEN);
     s_visible = true;
+    amp_encoder_set_popup(true);
 }
 
 void ui_vertical_slider_hide(void) {
     lv_obj_add_flag(s_backdrop, LV_OBJ_FLAG_HIDDEN);
     s_visible = false;
+    amp_encoder_set_popup(false);
 }
 
 bool ui_vertical_slider_target(uint8_t *fx_index, uint8_t *knob_index) {

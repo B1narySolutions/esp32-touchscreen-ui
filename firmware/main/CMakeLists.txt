@@ -10,6 +10,8 @@ idf_component_register(
         "rig/rig_state.c"
         "rig/amp_models.c"
         "knobs/knobs.c"
+        "knobs/qt_encoder.c"
+        "knobs/amp_encoder.c"
         "sd/sd_storage.c"
         "nam/nam_a2.c"
         "nam/nam_store.c"

@@ -39,6 +39,7 @@ menu "Physical knobs"
 
     choice KNOBS_GPIO6
         prompt "Use of GPIO6 (the \"GPIO\" header J8)"
+        default KNOBS_GPIO6_NONE if KNOBS_ENCODERS
         default KNOBS_GPIO6_POT
         help
             GPIO6 is the board's only spare pin.
@@ -53,10 +54,31 @@ menu "Physical knobs"
 
     config KNOBS_ENCODERS
         bool "Adafruit STEMMA QT rotary encoders on the I2C header (0x36, 0x37)"
-        default n
+        default y
         help
-            Knob 1 (0x36): master volume, push = mute. Knob 2 (0x37): the open parameter,
-            push = bypass the selected effect. Untested until the hardware arrives.
+            Master encoder: rotation adjusts stored volume and pressing toggles mute.
+            Parameter encoder: rotation adjusts the open slider; its button is unused.
+            Both use four-wire I2C polling by default.
+
+    config KNOBS_MASTER_ADDRESS
+        hex "Master/mute encoder I2C address"
+        range 0x08 0x77
+        default 0x36
+        depends on KNOBS_ENCODERS
+
+    config KNOBS_PARAMETER_ADDRESS
+        hex "Parameter encoder I2C address"
+        range 0x08 0x77
+        default 0x37
+        depends on KNOBS_ENCODERS
+
+    config KNOBS_MASTER_REVERSE
+        bool "Reverse master encoder direction"
+        depends on KNOBS_ENCODERS
+
+    config KNOBS_PARAMETER_REVERSE
+        bool "Reverse parameter encoder direction"
+        depends on KNOBS_ENCODERS
 
     config KNOBS_ENCODER_REVERSE
         bool "Reverse encoder direction"

@@ -1,4 +1,5 @@
 #include "ui_main.h"
+#include "amp_encoder.h"
 #include "ui_theme.h"
 #include "ui_effects_data.h"
 #include "ui_effect_chip.h"
@@ -802,6 +803,7 @@ static int32_t meter_px(float dbfs) {
 
 static void meter_timer_cb(lv_timer_t *t) {
     (void)t;
+    amp_encoder_process();
     apply_external_changes();
     amp_models_sync_from_seed();
     if (s_selected_fx == FX_AMP && !s_seed_only) {
